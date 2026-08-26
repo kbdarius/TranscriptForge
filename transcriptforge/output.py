@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -32,3 +33,19 @@ def atomic_write(path: Path, content: str) -> None:
         try: os.unlink(temp_name)
         except OSError: pass
         raise
+
+
+def rename_media_to_match_output(source: Path, output: Path, overwrite: bool = False) -> Path:
+    """Move the source media beside the transcript using the transcript stem."""
+    source = source.resolve(); target = output.with_suffix(source.suffix).resolve()
+    if source == target:
+        return source
+    if target.exists():
+        if not overwrite:
+            raise FileExistsError(f"Media destination already exists: {target}")
+        if target.is_dir():
+            raise IsADirectoryError(f"Media destination is a directory: {target}")
+        target.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    return target
