@@ -11,6 +11,7 @@ import json
 import math
 import os
 import tempfile
+import wave
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,7 @@ class SpeakerCluster:
     samples: list[tuple[float, float]] = field(default_factory=list)
     suggested_name: str | None = None
     suggestion_score: float | None = None
+    sample_embeddings: list[list[float]] = field(default_factory=list)
 
 
 @dataclass
@@ -155,6 +157,42 @@ def _sample_ranges(intervals: list[tuple[float, float]]) -> list[tuple[float, fl
     return samples
 
 
+def write_review_samples(wav_path: Path, clusters: list[SpeakerCluster], directory: Path) -> dict[str, list[str]]:
+    """Persist short review clips for a pending CLI handoff."""
+    directory.mkdir(parents=True, exist_ok=True)
+    result: dict[str, list[str]] = {}
+    with wave.open(str(wav_path), "rb") as reader:
+        rate, channels, width = reader.getframerate(), reader.getnchannels(), reader.getsampwidth()
+        for cluster in clusters:
+            files = []
+            for index, (start, end) in enumerate(cluster.samples, start=1):
+                target = directory / f"{cluster.identifier}-{index}.wav"
+                reader.setpos(max(0, int(start * rate)))
+                frames = reader.readframes(max(1, int((end - start) * rate)))
+                with wave.open(str(target), "wb") as writer:
+                    writer.setnchannels(channels); writer.setsampwidth(width); writer.setframerate(rate); writer.writeframes(frames)
+                files.append(str(target))
+            result[cluster.identifier] = files
+    return result
+
+
+def remove_review_sample(analysis: SpeakerAnalysis, cluster: SpeakerCluster, index: int) -> tuple[float, float]:
+    """Remove one review clip from profile training and current labeling."""
+    if index < 0 or index >= len(cluster.samples):
+        raise IndexError("Speaker sample index is out of range")
+    removed = cluster.samples.pop(index)
+    if index < len(cluster.sample_embeddings):
+        cluster.sample_embeddings.pop(index)
+    cluster.intervals = [interval for interval in cluster.intervals if interval != removed]
+    analysis.interval_labels = [item for item in analysis.interval_labels if item[:2] != removed]
+    if cluster.sample_embeddings:
+        average = np.mean(np.asarray(cluster.sample_embeddings, dtype=float), axis=0)
+        cluster.embedding = (average / max(float(np.linalg.norm(average)), 1e-8)).tolist()
+    else:
+        cluster.embedding = []
+    return removed
+
+
 def _load_encoder():
     try:
         from resemblyzer import VoiceEncoder
@@ -204,10 +242,12 @@ def analyze_speakers(samples: np.ndarray, rate: int, cancel=None, log=None, prog
     for number, cluster in enumerate(clusters, start=1):
         identifier = f"SPEAKER_{number:02d}"
         intervals = sorted(cluster["intervals"])
-        samples_for_review = sorted(intervals, key=lambda item: item[1] - item[0], reverse=True)[:3]
+        ranked = sorted(zip(intervals, cluster["embeddings"]), key=lambda item: item[0][1] - item[0][0], reverse=True)[:3]
+        samples_for_review = [item[0] for item in ranked]
+        sample_embeddings = [item[1].astype(float).tolist() for item in ranked]
         vector = cluster["centroid"].astype(float).tolist()
         suggested, score = store.best_match(vector)
-        output.append(SpeakerCluster(identifier, vector, intervals, samples_for_review, suggested, score))
+        output.append(SpeakerCluster(identifier, vector, intervals, samples_for_review, suggested, score, sample_embeddings))
         interval_labels.extend((start, end, identifier) for start, end in intervals)
         log(f"Detected {identifier} with {len(intervals)} voice samples")
     return SpeakerAnalysis(output, sorted(interval_labels))
@@ -218,7 +258,11 @@ def save_confirmed_profiles(analysis: SpeakerAnalysis, names: dict[str, str], st
     for cluster in analysis.clusters:
         name = " ".join(names.get(cluster.identifier, "").strip().split())
         if name:
-            store.add_confirmed_embedding(name, cluster.embedding)
+            # Learn only from samples the user kept. The centroid fallback
+            # preserves compatibility with programmatically-created clusters.
+            embeddings = cluster.sample_embeddings if cluster.sample_embeddings else ([cluster.embedding] if cluster.samples else [])
+            for embedding in embeddings:
+                store.add_confirmed_embedding(name, embedding)
     if names:
         store.save()
     return store

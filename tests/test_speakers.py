@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from transcriptforge.models import Segment
-from transcriptforge.speakers import SpeakerAnalysis, SpeakerCluster, SpeakerProfileStore, apply_speaker_names, cosine_similarity, refine_unresolved_clusters
+from transcriptforge.speakers import SpeakerAnalysis, SpeakerCluster, SpeakerProfileStore, apply_speaker_names, cosine_similarity, refine_unresolved_clusters, remove_review_sample
 
 
 class SpeakerTests(unittest.TestCase):
@@ -47,3 +47,21 @@ class SpeakerTests(unittest.TestCase):
             names, unresolved, _ = refine_unresolved_clusters(analysis, {"SPEAKER_01": "Unknown"}, store)
             self.assertEqual(names["SPEAKER_01"], "Unknown")
             self.assertEqual(unresolved, [])
+
+    def test_removed_sample_embedding_is_not_saved_to_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SpeakerProfileStore(Path(directory) / "profiles.json")
+            cluster = SpeakerCluster("SPEAKER_01", [1.0, 0.0], [(0, 4)], [(0, 2), (2, 4)], None, None, [[1.0, 0.0], [0.0, 1.0]])
+            cluster.samples.pop(1); cluster.sample_embeddings.pop(1)
+            save_store = SpeakerProfileStore(store.path)
+            from transcriptforge.speakers import save_confirmed_profiles
+            save_confirmed_profiles(SpeakerAnalysis([cluster], []), {"SPEAKER_01": "Alex"}, save_store)
+            self.assertEqual(len(SpeakerProfileStore(store.path).profiles["Alex"]), 1)
+            self.assertEqual(SpeakerProfileStore(store.path).profiles["Alex"][0], [1.0, 0.0])
+
+    def test_removed_sample_is_removed_from_current_speaker_intervals(self):
+        cluster = SpeakerCluster("SPEAKER_01", [1.0, 0.0], [(0, 2), (2, 4)], [(0, 2), (2, 4)], None, None, [[1.0, 0.0], [0.9, 0.1]])
+        analysis = SpeakerAnalysis([cluster], [(0, 2, "SPEAKER_01"), (2, 4, "SPEAKER_01")])
+        self.assertEqual(remove_review_sample(analysis, cluster, 0), (0, 2))
+        self.assertEqual(cluster.intervals, [(2, 4)])
+        self.assertEqual(analysis.interval_labels, [(2, 4, "SPEAKER_01")])

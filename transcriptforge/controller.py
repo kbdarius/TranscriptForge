@@ -4,7 +4,7 @@ from pathlib import Path
 from .audio import read_wav
 from .media import decode_to_wav, temporary_work_dir
 from .models_cache import cache_dir, load_model
-from .output import atomic_write, render_markdown
+from .output import atomic_write, rename_media_to_match_output, render_markdown
 from .speakers import SpeakerProfileStore, analyze_speakers, apply_speaker_names, refine_unresolved_clusters, save_confirmed_profiles
 from .transcription import transcribe_samples
 
@@ -13,10 +13,10 @@ class TranscriptionController:
         self.callback = callback or (lambda kind, value: None); self.cancel_event = threading.Event(); self.review_event = threading.Event(); self.speaker_names = {}; self.thread = None
     def cancel(self): self.cancel_event.set(); self.review_event.set()
     def set_speaker_names(self, names: dict[str, str]): self.speaker_names = dict(names); self.review_event.set()
-    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False):
-        self.cancel_event.clear(); self.review_event.clear(); self.speaker_names = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers), daemon=True); self.thread.start()
+    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False, rename_source=True, overwrite_media=False):
+        self.cancel_event.clear(); self.review_event.clear(); self.speaker_names = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media), daemon=True); self.thread.start()
     def _emit(self, kind, value=None): self.callback(kind, value)
-    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers):
+    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media):
         try:
             with temporary_work_dir() as temp:
                 wav = decode_to_wav(source, Path(temp)); self._emit("status", "Decoded audio")
@@ -61,7 +61,14 @@ class TranscriptionController:
                 if self.cancel_event.is_set(): raise InterruptedError("Transcription cancelled")
                 if analysis and analysis.clusters:
                     apply_speaker_names(segments, analysis, self.speaker_names, save_profiles=False)
-                atomic_write(output, render_markdown(source, model_name, language, len(samples) / rate, segments, stats, cache_dir(), include_timestamps))
+                markdown_source = source
+                if rename_source:
+                    try:
+                        markdown_source = rename_media_to_match_output(source, output, overwrite_media)
+                        if markdown_source != source.resolve(): self._emit("log", f"Renamed source media before writing transcript: {markdown_source}")
+                    except Exception as exc:
+                        self._emit("log", f"Warning: source media could not be renamed before writing transcript: {exc}")
+                atomic_write(output, render_markdown(markdown_source, model_name, language, len(samples) / rate, segments, stats, cache_dir(), include_timestamps))
                 if retain_wav: retained = output.with_suffix(".decoded.wav"); retained.write_bytes(wav.read_bytes()); self._emit("log", f"Retained intermediate WAV: {retained}")
             self._emit("done", output)
         except InterruptedError as exc: self._emit("cancelled", str(exc))
