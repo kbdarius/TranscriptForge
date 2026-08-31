@@ -2,7 +2,9 @@
 
 TranscriptForge is a local-first Windows desktop application for turning an audio or video file into a timestamped Markdown transcript. Audio is decoded locally with the FFmpeg executable supplied by `imageio-ffmpeg`, then passed to local Whisper as NumPy samples. No audio or transcript is uploaded.
 
-Current version: `0.16.1`.
+Current version: `0.17.0`.
+
+For a new Windows PC, run [Setup_TranscriptForge.bat](C:\Users\dariusk\TOOLS\TranscriptForge\Setup_TranscriptForge.bat) once before launching the application. See [INSTALLATION.md](C:\Users\dariusk\TOOLS\TranscriptForge\INSTALLATION.md) for the complete dependency list, model setup, and restricted-PC troubleshooting.
 
 Generated transcripts contain the transcript metadata and transcript content only; internal processing notes are kept out of the Markdown output.
 
