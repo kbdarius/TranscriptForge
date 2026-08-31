@@ -15,11 +15,6 @@ def timestamp(seconds: float) -> str:
 def render_markdown(source: Path, model: str, language: str, duration: float, segments: list[Segment], stats: ProcessingStats, cache: Path, include_timestamps: bool = True) -> str:
     lines = [f"# Transcript: {source.name}", "", f"**Generated:** {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}  ", f"**Source:** `{source}`  ", f"**Model:** `{model}`  ", f"**Language:** `{language}`  ", f"**Duration:** `{timestamp(duration)}`", "", "## Transcript", ""]
     lines.extend((f"[{timestamp(s.start)} - {timestamp(s.end)}] " if include_timestamps else "") + (f"{s.speaker}: " if s.speaker else "") + s.text.strip() for s in segments if s.text.strip())
-    lines += ["", "## Processing Notes", "", f"- Windows retried for suspected repeated output: `{stats.retries}`.", f"- Unclear or silent intervals omitted after retry: `{stats.omitted}`.", f"- Model cache: `{cache}`."]
-    if any(segment.speaker for segment in segments):
-        lines.append("- Speaker labels were assigned locally from user-confirmed voice profiles.")
-    if stats.warnings:
-        lines.append("- Warnings: " + "; ".join(stats.warnings))
     return "\n".join(lines) + "\n"
 
 def atomic_write(path: Path, content: str) -> None:
@@ -35,9 +30,21 @@ def atomic_write(path: Path, content: str) -> None:
         raise
 
 
+def append_markdown_content(path: Path, provider: str, content: str) -> None:
+    """Append manually supplied, attributed content to an existing transcript."""
+    clean_provider = " ".join(provider.strip().split()) or "Unknown"
+    clean_content = content.strip()
+    if not clean_content:
+        raise ValueError("Additional content cannot be empty")
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    separator = "\n" if existing.endswith("\n") else "\n\n"
+    addition = f"## Additional content\n\n**Provided by:** {clean_provider}\n\n{clean_content}\n"
+    atomic_write(path, existing + separator + addition)
+
+
 def rename_media_to_match_output(source: Path, output: Path, overwrite: bool = False) -> Path:
-    """Move the source media beside the transcript using the transcript stem."""
-    source = source.resolve(); target = output.with_suffix(source.suffix).resolve()
+    """Rename the source media in its original folder using the transcript stem."""
+    source = source.resolve(); target = source.with_name(output.stem + source.suffix).resolve()
     if source == target:
         return source
     if target.exists():

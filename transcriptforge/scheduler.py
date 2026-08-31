@@ -22,7 +22,7 @@ def find_new_recording(folder: Path, history: RecordingHistory | None = None, mi
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
             try:
                 modified = path.stat().st_mtime
-                if modified <= cutoff and (baseline is None or modified > baseline) and not history.has_completed(path):
+                if modified <= cutoff and (history.is_retry(path) or (baseline is None or modified > baseline)) and not history.has_completed(path):
                     candidates.append(path)
             except OSError:
                 continue

@@ -15,7 +15,7 @@ from .media import SUPPORTED_EXTENSIONS, decode_to_wav, temporary_work_dir
 from .models_cache import MODEL_NAMES, cache_dir, download_model, load_model, model_available
 from .output import atomic_write, render_markdown
 from .settings import OutputLocationHistory, settings_dir
-from .speakers import SpeakerProfileStore, analyze_speakers, apply_speaker_names, refine_unresolved_clusters, save_confirmed_profiles, write_review_samples
+from .speakers import SpeakerProfileStore, analyze_speakers, apply_speaker_names, fill_unknown_speakers_from_neighbors, refine_unresolved_clusters, save_confirmed_profiles, write_review_samples
 from .transcription import transcribe_samples
 from .version import __version__
 
@@ -110,7 +110,7 @@ def _transcribe(args) -> int:
                         return REVIEW_REQUIRED
                     if not names and args.accept_suggestions:
                         names = {cluster.identifier: cluster.suggested_name or "" for cluster in analysis.clusters}
-                    profile_store = save_confirmed_profiles(analysis, names, profile_store)
+                    profile_store = save_confirmed_profiles(analysis, names, profile_store, {"source": str(source)})
                     final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, names, profile_store)
                     if unresolved and not args.accept_suggestions:
                         sample_files = write_review_samples(wav, unresolved, review_dir)
@@ -125,6 +125,9 @@ def _transcribe(args) -> int:
             segments, stats = transcribe_samples(samples, rate, model, args.language, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "progress", value=value))
             if analysis and analysis.clusters:
                 apply_speaker_names(segments, analysis, names, save_profiles=False)
+                inferred = fill_unknown_speakers_from_neighbors(segments)
+                if inferred:
+                    _emit(args.json_events, "log", message=f"Filled {inferred} short Unknown segment(s) from matching neighboring speakers.")
             atomic_write(output, render_markdown(source, args.model, args.language, len(samples) / rate, segments, stats, cache_dir(), not args.no_timestamps))
         OutputLocationHistory().remember(output.parent)
         if review_dir.exists():

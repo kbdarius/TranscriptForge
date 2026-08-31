@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_OUTPUT_LOCATIONS = 5
+MAX_FILENAME_TEMPLATES = 30
 
 
 def settings_dir() -> Path:
@@ -96,6 +97,86 @@ class RecordingFolderSettings:
             raise
 
 
+class FilenameTemplateSettings:
+    """Persist recurring meeting names used to construct dated outputs."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "filename-templates.json"
+        self.names: list[str] = []
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            values = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(values, list):
+                self.names = [str(value) for value in values if isinstance(value, str)][:MAX_FILENAME_TEMPLATES]
+        except (OSError, ValueError, TypeError):
+            self.names = []
+
+    def remember(self, name: str) -> None:
+        value = " ".join(str(name).strip().split())
+        if not value:
+            return
+        normalized = value.casefold()
+        self.names = [item for item in self.names if item.casefold() != normalized]
+        self.names.insert(0, value)
+        self.names = self.names[:MAX_FILENAME_TEMPLATES]
+        self.save()
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix="filename-templates-", suffix=".tmp", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(self.names[:MAX_FILENAME_TEMPLATES], handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
+class SampleRejectionStore:
+    """Keep reasons for removed voice samples without retaining raw audio."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "speaker-sample-rejections.json"
+        self.records: list[dict] = []
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(value, list):
+                self.records = [item for item in value if isinstance(item, dict)]
+        except (OSError, ValueError, TypeError):
+            self.records = []
+
+    def add(self, embedding: list[float], reason: str, note: str = "", source: str = "") -> None:
+        self.records.append({"embedding": [float(value) for value in embedding], "reason": reason, "note": note.strip(), "source": source, "added_at": datetime.now(timezone.utc).isoformat()})
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix="speaker-rejections-", suffix=".tmp", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(self.records, handle, ensure_ascii=False, indent=2); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
 class RecordingHistory:
     """A small local ledger used by the scheduled recording scan."""
 
@@ -124,15 +205,23 @@ class RecordingHistory:
             key = self.fingerprint(source)
         except OSError:
             return False
-        return any(item.get("fingerprint") == key and item.get("status") in {"pending", "completed"} for item in self.records)
+        return any(item.get("fingerprint") == key and item.get("status") in {"pending", "completed", "ignored", "deleted"} for item in self.records)
+
+    def is_retry(self, source: Path) -> bool:
+        try:
+            key = self.fingerprint(source)
+        except OSError:
+            key = str(source.resolve())
+        return any(item.get("fingerprint") == key and item.get("status") == "retry" for item in self.records)
 
     def latest_completed_source_mtime(self) -> float | None:
         values = [item.get("source_mtime") for item in self.records if item.get("status") == "completed" and isinstance(item.get("source_mtime"), (int, float))]
         return max(values) if values else None
 
     def update(self, source: Path, status: str, output: Path | None = None, final_media: Path | None = None) -> None:
-        key = self.fingerprint(source) if source.exists() else str(source.resolve())
-        record = next((item for item in self.records if item.get("fingerprint") == key), None)
+        resolved = str(source.resolve())
+        key = self.fingerprint(source) if source.exists() else resolved
+        record = next((item for item in self.records if item.get("fingerprint") == key or item.get("original_path") == resolved), None)
         if record is None:
             record = {"fingerprint": key, "original_path": str(source.resolve())}
             self.records.append(record)

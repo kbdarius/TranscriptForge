@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from transcriptforge.cli import _review_names, build_parser
-from transcriptforge.settings import RecordingFolderSettings, RecordingHistory
+from transcriptforge.settings import FilenameTemplateSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 
 
 class CliTests(unittest.TestCase):
@@ -41,6 +41,15 @@ class CliTests(unittest.TestCase):
             history = RecordingHistory(root / "recording-history.json"); history.update(source, "pending")
             self.assertTrue(history.has_completed(source))
 
+    def test_ignored_recording_can_be_requeued(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source = root / "meeting.wav"; source.write_bytes(b"audio")
+            history = RecordingHistory(root / "recording-history.json"); history.update(source, "ignored")
+            self.assertTrue(history.has_completed(source))
+            history.update(source, "retry")
+            self.assertFalse(history.has_completed(source))
+            self.assertTrue(history.is_retry(source))
+
     def test_history_keeps_multiple_recordings(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -51,8 +60,31 @@ class CliTests(unittest.TestCase):
             history.update(second, "failed")
             self.assertEqual(len(RecordingHistory(root / "recording-history.json").records), 2)
 
+    def test_history_update_after_rename_keeps_original_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); original = root / "recording.mp4"; original.write_bytes(b"audio")
+            history = RecordingHistory(root / "recording-history.json"); history.update(original, "pending")
+            original.unlink(); renamed = root / "final.mp4"; renamed.write_bytes(b"audio")
+            history.update(original, "completed", root / "final.md", renamed)
+            records = RecordingHistory(root / "recording-history.json").records
+            self.assertEqual(len(records), 1); self.assertEqual(records[0]["status"], "completed"); self.assertEqual(records[0]["final_path"], str(renamed.resolve()))
+
     def test_latest_completed_recording_is_scan_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); source = root / "meeting.wav"; source.write_bytes(b"audio")
             history = RecordingHistory(root / "recording-history.json"); history.update(source, "completed")
             self.assertEqual(history.latest_completed_source_mtime(), source.stat().st_mtime)
+
+    def test_filename_templates_remember_newest_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "filename-templates.json"
+            settings = FilenameTemplateSettings(path)
+            settings.remember("SW Daily Standup"); settings.remember("Project Review"); settings.remember("sw daily standup")
+            loaded = FilenameTemplateSettings(path)
+            self.assertEqual(loaded.names, ["sw daily standup", "Project Review"])
+
+    def test_sample_rejection_store_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rejections.json"; store = SampleRejectionStore(path); store.add([1.0, 0.0], "Too noisy or unclear", "Hard to hear", "meeting.wav")
+            loaded = SampleRejectionStore(path)
+            self.assertEqual(loaded.records[0]["reason"], "Too noisy or unclear")
