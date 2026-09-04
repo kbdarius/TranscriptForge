@@ -1,9 +1,11 @@
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
-from transcriptforge.cli import _review_names, build_parser
+from transcriptforge.cli import _emit, _review_names, build_parser
 from transcriptforge.settings import FilenameTemplateSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 
 
@@ -13,6 +15,23 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.json_events)
         self.assertTrue(args.speakers)
         self.assertEqual(args.model, "small.en")
+
+    def test_parser_supports_expected_speakers_and_diagnostics(self):
+        args = build_parser().parse_args(["transcribe", "meeting.mp4", "--speakers", "--expected-speaker", "Alex", "--expected-speaker", "Blair"])
+        self.assertEqual(args.expected_speakers, ["Alex", "Blair"])
+        diagnostic = build_parser().parse_args(["diagnose", "meeting.mp4", "--expected-speaker", "Alex"])
+        self.assertEqual(diagnostic.command, "diagnose")
+
+    def test_parser_supports_source_quarantine_for_selected_profiles(self):
+        args = build_parser().parse_args(["profiles", "quarantine-source", "meeting.mp4", "--name", "Alex", "--name", "Blair"])
+        self.assertEqual(args.source, "meeting.mp4")
+        self.assertEqual(args.names, ["Alex", "Blair"])
+
+    def test_profile_event_has_a_visible_name(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            _emit(False, "profile", name="Alex", archive=2, active=2)
+        self.assertIn("[profile] Alex", output.getvalue())
 
     def test_review_names_reads_edited_cluster_names(self):
         with tempfile.TemporaryDirectory() as directory:

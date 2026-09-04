@@ -27,7 +27,7 @@ def _emit(json_events: bool, event: str, **values) -> None:
     if json_events:
         print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
     else:
-        message = values.get("message") or values.get("path") or ""
+        message = values.get("message") or values.get("path") or values.get("name") or ""
         print(f"[{event}] {message}", flush=True)
 
 
@@ -97,7 +97,7 @@ def _transcribe(args) -> int:
             analysis = None; names = {}
             if args.speakers:
                 _emit(args.json_events, "stage", message="Analyzing speaker voices")
-                analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value))
+                analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers, source=source)
                 if analysis.clusters:
                     profile_store = SpeakerProfileStore()
                     review_file = Path(args.speaker_review) if args.speaker_review else None
@@ -111,7 +111,7 @@ def _transcribe(args) -> int:
                     if not names and args.accept_suggestions:
                         names = {cluster.identifier: cluster.suggested_name or "" for cluster in analysis.clusters}
                     profile_store = save_confirmed_profiles(analysis, names, profile_store, {"source": str(source)})
-                    final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, names, profile_store)
+                    final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, names, profile_store, args.expected_speakers)
                     if unresolved and not args.accept_suggestions:
                         sample_files = write_review_samples(wav, unresolved, review_dir)
                         review_path = _review_path(args, output); _write_review(review_path, source, unresolved, final_names, sorted(profile_store.profiles), sample_files)
@@ -155,11 +155,42 @@ def _profiles(args) -> int:
     if args.profiles_action == "path":
         _emit(args.json_events, "profile_path", path=str(store.path)); return 0
     if args.profiles_action == "list":
-        for name, vectors in sorted(store.profiles.items()): _emit(args.json_events, "profile", name=name, samples=len(vectors))
+        for name, vectors in sorted(store.profiles.items()): _emit(args.json_events, "profile", name=name, samples=len(vectors), archive=len(vectors), active=len(store.active_vectors(name)))
+        return 0
+    if args.profiles_action == "quarantine-source":
+        backup = None
+        if store.path.is_file():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = store.path.with_name(f"{store.path.stem}.backup-{stamp}{store.path.suffix}")
+            shutil.copy2(store.path, backup)
+        count = store.quarantine_source(args.source, args.names, args.reason)
+        message = f"Quarantined {count} archived embedding(s) from active matching."
+        if backup:
+            message += f" Backup: {backup}"
+        _emit(args.json_events, "completed", message=message, count=count, backup=str(backup) if backup else None)
         return 0
     if args.name not in store.profiles:
         raise ValueError(f"Profile not found: {args.name}")
     del store.profiles[args.name]; store.save(); _emit(args.json_events, "completed", message=f"Deleted profile {args.name}"); return 0
+
+
+def _diagnose(args) -> int:
+    source = Path(args.input).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise ValueError("Input must be an existing supported audio or video file")
+    with temporary_work_dir() as temporary:
+        wav = decode_to_wav(source, Path(temporary)); samples, rate = read_wav(wav)
+        analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers, source=source)
+    store = SpeakerProfileStore()
+    clusters = []
+    for cluster in analysis.clusters:
+        candidates = store.match_candidates(cluster.embedding, args.expected_speakers, [source])
+        clusters.append({"id": cluster.identifier, "intervals": len(cluster.intervals), "duration": sum(end - start for start, end in cluster.intervals), "suggestion": cluster.suggested_name, "score": cluster.suggestion_score, "candidates": [{"name": name, "score": score} for name, score in candidates[:5]]})
+    report = {"input": str(source), "duration": len(samples) / rate, "voiced_intervals": len(analysis.interval_labels), "clusters": clusters, "profiles": {name: {"archive": len(store.profiles[name]), "active": len(store.active_vectors(name))} for name in store.profiles}}
+    _emit(args.json_events, "diagnostic", message=f"{len(clusters)} clusters, {len(analysis.interval_labels)} voiced intervals", report=report)
+    if not args.json_events:
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -167,9 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json-events", action="store_true", help="Emit newline-delimited JSON events for automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
     transcribe = subparsers.add_parser("transcribe", help="Transcribe a local media file")
-    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true")
+    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true")
+    diagnose = subparsers.add_parser("diagnose", help="Analyze speaker clusters and profile matches without transcribing or changing profiles"); diagnose.add_argument("input"); diagnose.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit analysis to this known name; repeat for multiple speakers")
     models = subparsers.add_parser("models", help="Inspect or download Whisper models"); models_sub = models.add_subparsers(dest="models_action", required=True); models_sub.add_parser("list"); download = models_sub.add_parser("download"); download.add_argument("name", choices=MODEL_NAMES)
-    profiles = subparsers.add_parser("profiles", help="Inspect or manage local speaker profiles"); profiles_sub = profiles.add_subparsers(dest="profiles_action", required=True); profiles_sub.add_parser("list"); profiles_sub.add_parser("path"); remove = profiles_sub.add_parser("remove"); remove.add_argument("name")
+    profiles = subparsers.add_parser("profiles", help="Inspect or manage local speaker profiles"); profiles_sub = profiles.add_subparsers(dest="profiles_action", required=True); profiles_sub.add_parser("list"); profiles_sub.add_parser("path"); remove = profiles_sub.add_parser("remove"); remove.add_argument("name"); quarantine = profiles_sub.add_parser("quarantine-source", help="Keep embeddings archived but exclude one recording from active matching"); quarantine.add_argument("source"); quarantine.add_argument("--name", dest="names", action="append", default=[], help="Limit quarantine to this speaker; repeat as needed"); quarantine.add_argument("--reason", default="source quarantined after review")
     return parser
 
 
@@ -177,6 +209,7 @@ def main(argv=None) -> int:
     parser = build_parser(); args = parser.parse_args(argv)
     try:
         if args.command == "transcribe": return _transcribe(args)
+        if args.command == "diagnose": return _diagnose(args)
         if args.command == "models": return _models(args)
         return _profiles(args)
     except Exception as exc:

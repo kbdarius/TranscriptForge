@@ -1,6 +1,6 @@
 # TranscriptForge installation guide
 
-Current application version: `0.17.0`.
+Current application version: `0.20.2`.
 
 ## Quick setup on a new Windows PC
 
@@ -101,4 +101,3 @@ py -3 -m transcriptforge
 ```
 
 All audio processing after setup is local. Audio and transcript content are not sent to a cloud transcription service.
-

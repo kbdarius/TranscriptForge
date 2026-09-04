@@ -10,15 +10,15 @@ from .transcription import transcribe_samples
 
 class TranscriptionController:
     def __init__(self, callback=None):
-        self.callback = callback or (lambda kind, value: None); self.cancel_event = threading.Event(); self.review_event = threading.Event(); self.transcription_ready_event = threading.Event(); self.speaker_names = {}; self.thread = None; self.pending_output = None; self.pending_rename_source = True; self.pending_overwrite_media = False
+        self.callback = callback or (lambda kind, value: None); self.cancel_event = threading.Event(); self.review_event = threading.Event(); self.transcription_ready_event = threading.Event(); self.speaker_names = {}; self.speaker_learning = {}; self.thread = None; self.pending_output = None; self.pending_rename_source = True; self.pending_overwrite_media = False
     def cancel(self): self.cancel_event.set(); self.review_event.set(); self.transcription_ready_event.set()
-    def set_speaker_names(self, names: dict[str, str]): self.speaker_names = dict(names); self.review_event.set()
+    def set_speaker_names(self, names: dict[str, str], learning: dict[str, bool] | None = None): self.speaker_names = dict(names); self.speaker_learning = dict(learning or {}); self.review_event.set()
     def set_output(self, output: Path, rename_source=True, overwrite_media=False): self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media
     def continue_transcription(self): self.transcription_ready_event.set()
-    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False, rename_source=True, overwrite_media=False):
-        self.cancel_event.clear(); self.review_event.clear(); self.transcription_ready_event.clear(); self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media; self.speaker_names = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media), daemon=True); self.thread.start()
+    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False, rename_source=True, overwrite_media=False, expected_speakers=None):
+        self.cancel_event.clear(); self.review_event.clear(); self.transcription_ready_event.clear(); self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media; self.speaker_names = {}; self.speaker_learning = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers), daemon=True); self.thread.start()
     def _emit(self, kind, value=None): self.callback(kind, value)
-    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media):
+    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers):
         try:
             with temporary_work_dir() as temp:
                 wav = decode_to_wav(source, Path(temp)); self._emit("status", "Decoded audio")
@@ -26,7 +26,7 @@ class TranscriptionController:
                 analysis = None
                 if identify_speakers:
                     self._emit("status", "Analyzing local speaker voices")
-                    analysis = analyze_speakers(samples, rate, self.cancel_event, lambda x: self._emit("log", x), lambda x: self._emit("progress", x * .2))
+                    analysis = analyze_speakers(samples, rate, self.cancel_event, lambda x: self._emit("log", x), lambda x: self._emit("progress", x * .2), expected_speakers, source)
                     if analysis.clusters:
                         profile_store = SpeakerProfileStore()
                         self.review_event.clear()
@@ -36,9 +36,9 @@ class TranscriptionController:
                                 raise InterruptedError("Speaker review cancelled")
                         if self.cancel_event.is_set():
                             raise InterruptedError("Speaker review cancelled")
-                        first_pass_names = dict(self.speaker_names)
-                        profile_store = save_confirmed_profiles(analysis, first_pass_names, profile_store, {"source": str(source.resolve())})
-                        final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, first_pass_names, profile_store)
+                        first_pass_names = dict(self.speaker_names); first_pass_learning = dict(self.speaker_learning)
+                        profile_store = save_confirmed_profiles(analysis, first_pass_names, profile_store, {"source": str(source.resolve())}, first_pass_learning)
+                        final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, first_pass_names, profile_store, expected_speakers)
                         confirmed_ids = {identifier for identifier, value in first_pass_names.items() if value.strip()}
                         auto_count = sum(1 for identifier, value in final_names.items() if identifier not in confirmed_ids and value.strip())
                         if auto_count:
@@ -51,9 +51,9 @@ class TranscriptionController:
                                     raise InterruptedError("Speaker review cancelled")
                             if self.cancel_event.is_set():
                                 raise InterruptedError("Speaker review cancelled")
-                            second_pass_names = dict(self.speaker_names)
+                            second_pass_names = dict(self.speaker_names); second_pass_learning = dict(self.speaker_learning)
                             final_names.update(second_pass_names)
-                            save_confirmed_profiles(analysis, second_pass_names, profile_store, {"source": str(source.resolve())})
+                            save_confirmed_profiles(analysis, second_pass_names, profile_store, {"source": str(source.resolve())}, second_pass_learning)
                         self.speaker_names = final_names
                         self._emit("ready", "Speaker review complete. Confirm the output filename and folder, then start transcription.")
                         while not self.transcription_ready_event.wait(.2):

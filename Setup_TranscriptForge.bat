@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ========================================
-echo TranscriptForge setup v0.17.0
+echo TranscriptForge setup
 echo ========================================
 echo.
 
@@ -141,4 +141,3 @@ echo.
 echo Setup did not complete. No application transcription was started.
 pause
 exit /b 1
-

@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 models/
 *.decoded.wav
-
+*.tfconfig
+speaker-profiles*.json
