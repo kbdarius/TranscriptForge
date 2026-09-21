@@ -1,4 +1,6 @@
-# Speaker Recognition Improvement Plan
+# Speaker Recognition Current State
+
+This document records the current implementation, evidence, safeguards, and known limitations. It is not a validated future solution. Candidate changes are evaluated in [Speaker Recognition Feasibility Plan](SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md) before production implementation.
 
 ## Purpose
 
