@@ -22,13 +22,14 @@ from .models_cache import MODEL_NAMES, cache_dir, download_model, model_availabl
 from .output import append_markdown_content
 from .settings import FilenameTemplateSettings, OutputLocationHistory, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
+from .speaker_names import filter_speaker_name_choices, speaker_name_choices
 from .version import __version__
 
 DEFAULT_RECORDINGS_FOLDER = Path(r"C:\Users\dariusk\OneDrive - stryten.com\Recordings")
 
 class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
-        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("900x650"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings()
+        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("900x650"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings()
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self.identify_speakers.set(identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder))
     def _window_title(self, label):
@@ -252,7 +253,7 @@ class App(tk.Tk):
         if self.rename_source.get() and rename_target.resolve() != source.resolve() and rename_target.exists():
             if not messagebox.askyesno(self._window_title("Replace existing media?"), f"Replace the existing media file?\n\n{rename_target}"): return
             self.rename_overwrite = True
-        self.active_source = source; self.active_output = output; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), self.identify_speakers.get(), self.rename_source.get(), self.rename_overwrite, self._speaker_shortlist())
+        self.active_source = source; self.active_output = output; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), self.identify_speakers.get(), self.rename_source.get(), self.rename_overwrite, self._speaker_shortlist())
     def _confirm_transcription(self):
         source = Path(self.input_var.get()); output = (Path(self.folder_var.get()) / self.filename_var.get()).with_suffix(".md")
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -317,16 +318,115 @@ class App(tk.Tk):
                     SampleRejectionStore().add(embedding, reason, note.get("1.0", "end"), str(getattr(self, "active_source", "")))
                 dialog.grab_release(); dialog.destroy(); self._write_log(f"Removed sample from {cluster.identifier}: {removed[0]:.2f}s-{removed[1]:.2f}s ({reason})"); self._render_sample_controls(parent, self.speaker_review_source, cluster)
             buttons = ttk.Frame(frame); buttons.pack(fill="x"); ttk.Button(buttons, text="Cancel", command=lambda: (dialog.grab_release(), dialog.destroy())).pack(side="right", padx=4); ttk.Button(buttons, text="Remove sample", command=confirm).pack(side="right")
+    def _filter_speaker_name_combo(self, event, combo, names, recent_names):
+        if event.keysym in {
+            "Up", "Down", "Left", "Right", "Return", "Escape", "Tab",
+            "Home", "End", "Shift_L", "Shift_R", "Control_L", "Control_R",
+            "Alt_L", "Alt_R",
+        }:
+            return
+        combo.configure(values=filter_speaker_name_choices(names, combo.get(), recent_names))
+
+    @staticmethod
+    def _remember_speaker_name(combo, combos, names, recent_names):
+        selected = " ".join(combo.get().split())
+        if not selected:
+            return
+        recent_names[:] = [name for name in recent_names if name.casefold() != selected.casefold()]
+        recent_names.insert(0, selected)
+        choices = speaker_name_choices(names, recent_names)
+        for name_combo in combos:
+            name_combo.configure(values=choices)
+
     def _show_speaker_review(self, payload):
-        analysis = payload["analysis"]; clusters = payload.get("clusters", analysis.clusters); source = Path(payload["wav_path"]); self.speaker_review_source = source; self.speaker_review_analysis = analysis; dialog = tk.Toplevel(self); self.speaker_review = dialog; dialog.title(self._window_title(payload.get("title", "Identify speakers"))); dialog.transient(self); dialog.grab_set(); dialog.protocol("WM_DELETE_WINDOW", self._cancel_speaker_review)
-        frame = ttk.Frame(dialog, padding=12); frame.pack(fill="both", expand=True); ttk.Label(frame, text=payload.get("instructions", "Listen to each voice sample and confirm or edit the suggested name. Uncheck Learn when a labeled cluster should not train future recognition."), wraplength=720).pack(anchor="w", pady=(0, 10)); name_vars = {}; learn_vars = {}
-        existing_names = sorted(set(payload.get("existing_names", [])))
-        choices = [""] + existing_names + ["Unknown"]
+        analysis = payload["analysis"]
+        clusters = payload.get("clusters", analysis.clusters)
+        source = Path(payload["wav_path"])
+        self.speaker_review_source = source
+        self.speaker_review_analysis = analysis
+        dialog = tk.Toplevel(self)
+        self.speaker_review = dialog
+        dialog.title(self._window_title(payload.get("title", "Identify speakers")))
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.protocol("WM_DELETE_WINDOW", self._cancel_speaker_review)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        instructions = payload.get(
+            "instructions",
+            "Listen to each voice sample and confirm or edit the suggested name. "
+            "Uncheck Learn when a labeled cluster should not train future recognition.",
+        )
+        ttk.Label(frame, text=instructions, wraplength=720).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            frame,
+            text="Type to filter names; use the arrow keys and Enter to select. "
+            "Names selected in this review move to the top.",
+        ).pack(anchor="w", pady=(0, 10))
+
+        name_vars = {}
+        learn_vars = {}
+        name_combos = []
+        recent_names = self._recent_speaker_names
+        existing_names = sorted(set(payload.get("existing_names", [])), key=str.casefold)
+        choices = speaker_name_choices(existing_names)
         for cluster in clusters:
-            row = ttk.Frame(frame); row.pack(fill="x", pady=5); ttk.Label(row, text=cluster.identifier, width=14).pack(side="left"); sample_controls = ttk.Frame(row); sample_controls.pack(side="left"); self._render_sample_controls(sample_controls, source, cluster)
-            suggestion = cluster.suggested_name or ""; hint = f"  (suggested {suggestion}, {cluster.suggestion_score:.0%})" if suggestion and cluster.suggestion_score is not None else ""
-            ttk.Label(row, text=hint).pack(side="left", padx=4); variable = tk.StringVar(value=suggestion); name_vars[cluster.identifier] = variable; ttk.Combobox(row, textvariable=variable, values=choices, width=24).pack(side="right", fill="x", expand=True); learn = tk.BooleanVar(value=True); learn_vars[cluster.identifier] = learn; ttk.Checkbutton(row, text="Learn", variable=learn).pack(side="right", padx=6)
-        buttons = ttk.Frame(frame); buttons.pack(fill="x", pady=(12, 0)); ttk.Button(buttons, text="Cancel", command=self._cancel_speaker_review).pack(side="right", padx=5); ttk.Button(buttons, text="Continue", command=lambda: self._finish_speaker_review(name_vars, learn_vars)).pack(side="right")
+            row = ttk.Frame(frame)
+            row.pack(fill="x", pady=5)
+            ttk.Label(row, text=cluster.identifier, width=14).pack(side="left")
+            sample_controls = ttk.Frame(row)
+            sample_controls.pack(side="left")
+            self._render_sample_controls(sample_controls, source, cluster)
+
+            suggestion = cluster.suggested_name or ""
+            hint = f"  (suggested {suggestion}, {cluster.suggestion_score:.0%})" if suggestion and cluster.suggestion_score is not None else ""
+            ttk.Label(row, text=hint).pack(side="left", padx=4)
+            variable = tk.StringVar(value=suggestion)
+            name_vars[cluster.identifier] = variable
+            combo = ttk.Combobox(row, textvariable=variable, values=choices, width=24, state="normal")
+            combo.pack(side="right", fill="x", expand=True)
+            combo.bind(
+                "<FocusIn>",
+                lambda _event, widget=combo: widget.after_idle(
+                    lambda: widget.selection_range(0, tk.END)
+                ),
+            )
+            combo.bind(
+                "<KeyRelease>",
+                lambda event, widget=combo: self._filter_speaker_name_combo(
+                    event, widget, existing_names, recent_names
+                ),
+            )
+            remember = lambda _event, widget=combo: self._remember_speaker_name(
+                widget, name_combos, existing_names, recent_names
+            )
+            combo.bind("<<ComboboxSelected>>", remember)
+            combo.bind("<Return>", remember)
+            combo.bind(
+                "<FocusOut>",
+                lambda event, widget=combo, original=suggestion: (
+                    self._remember_speaker_name(
+                        widget, name_combos, existing_names, recent_names
+                    )
+                    if widget.get() != original
+                    else None
+                ),
+            )
+            name_combos.append(combo)
+
+            learn = tk.BooleanVar(value=True)
+            learn_vars[cluster.identifier] = learn
+            ttk.Checkbutton(row, text="Learn", variable=learn).pack(side="right", padx=6)
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=self._cancel_speaker_review).pack(side="right", padx=5)
+        ttk.Button(
+            buttons,
+            text="Continue",
+            command=lambda: self._finish_speaker_review(name_vars, learn_vars),
+        ).pack(side="right")
     def _finish_speaker_review(self, name_vars, learn_vars):
         names = {identifier: variable.get() for identifier, variable in name_vars.items()}; learning = {identifier: variable.get() for identifier, variable in learn_vars.items()}; dialog = self.speaker_review; self.speaker_review = None
         if dialog: dialog.grab_release(); dialog.destroy()

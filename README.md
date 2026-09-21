@@ -2,9 +2,9 @@
 
 TranscriptForge is a local-first Windows desktop application for turning an audio or video file into a timestamped Markdown transcript. Audio is decoded locally with the FFmpeg executable supplied by `imageio-ffmpeg`, then passed to local Whisper as NumPy samples. No audio or transcript is uploaded.
 
-Current version: `0.20.2`.
+Current version: `0.21.0`.
 
-For a new Windows PC, run [Setup_TranscriptForge.bat](Setup_TranscriptForge.bat) once before launching the application. See the [installation guide](DOC/INSTALLATION.md) for the complete dependency list, model setup, and restricted-PC troubleshooting. The [documentation index](DOC/README.md) links the project proposal and the speaker-recognition improvement plan.
+For a new Windows PC, run [Setup_TranscriptForge.bat](Setup_TranscriptForge.bat) once before launching the application. See the [installation guide](DOC/INSTALLATION.md) for the complete dependency list, model setup, and restricted-PC troubleshooting. The [documentation index](DOC/README.md) links the project proposal, current speaker-recognition behavior, and feasibility plan.
 
 Generated transcripts contain the transcript metadata and transcript content only; internal processing notes are kept out of the Markdown output.
 
@@ -21,7 +21,7 @@ The first use of a model requires a download. Models are cached under `%LOCALAPP
 
 The application remembers the recording folder for the current PC in `%LOCALAPPDATA%\LocalAudioTranscriber\recording-folder.json`. It starts with `C:\Users\dariusk\OneDrive - stryten.com\Recordings` when that default exists. If a saved folder is unavailable on another PC, TranscriptForge asks the user to choose a replacement folder at startup and stores that choice locally; no machine-specific path is shared with speaker profiles or the application code.
 
-Speaker identification is optional and local. Enable **Identify speakers locally** to analyze voice clusters, play representative samples, confirm names, and reuse confirmed speaker profiles in future recordings. The workflow has two review passes: the first captures obvious names, then confirmed profiles are used to resolve easy blanks and a shorter second dialog asks about the remaining uncertain voices before Whisper transcription starts. Each sample has its own **X** button so mixed or poor clips can be removed before profile learning. Existing names appear in editable dropdowns; users can type new names or choose `Unknown`. Each review row also has a **Learn** checkbox; clear it when the label is useful for this transcript but the cluster should not contribute training data.
+Speaker identification is optional and local. Enable **Identify speakers locally** to analyze voice clusters, play representative samples, confirm names, and reuse confirmed speaker profiles in future recordings. The workflow has two review passes: the first captures obvious names, then confirmed profiles are used to resolve easy blanks and a shorter second dialog asks about the remaining uncertain voices before Whisper transcription starts. Each sample has its own **X** button so mixed or poor clips can be removed before profile learning. Existing names appear in editable dropdowns: start typing to filter the choices, use the arrow keys and Enter to select, or type a new name. Names selected earlier in the same review are moved to the top of the later dropdowns. Each review row also has a **Learn** checkbox; clear it when the label is useful for this transcript but the cluster should not contribute training data.
 
 The Setup dialog includes optional **Expected speakers**. Enter known profile names separated by commas, such as `Keivan Darius, Prabhu Sannachi, Garrett Moore`, to limit automatic suggestions to the expected participants while still allowing `Unknown` or a new speaker during review. The same restriction is available in the CLI with repeated `--expected-speaker` options.
 
