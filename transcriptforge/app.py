@@ -1,5 +1,6 @@
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -20,28 +21,38 @@ from .configuration import export_configuration, import_configuration
 from .media import SUPPORTED_EXTENSIONS
 from .models_cache import MODEL_NAMES, cache_dir, download_model, model_available
 from .output import append_markdown_content
-from .settings import FilenameTemplateSettings, OutputLocationHistory, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
+from .settings import FilenameTemplateSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
-from .speaker_names import filter_speaker_name_choices, speaker_name_choices
+from .speaker_names import speaker_name_choices, speaker_name_suggestions
+from .outlook_calendar import today_meetings
 from .version import __version__
 
 DEFAULT_RECORDINGS_FOLDER = Path(r"C:\Users\dariusk\OneDrive - stryten.com\Recordings")
 
 class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
-        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("900x650"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings()
-        self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
-        self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self.identify_speakers.set(identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder))
+        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
+        self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
+        self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_today_outlook_meetings)
     def _window_title(self, label):
         return f"TranscriptForge v{__version__} — {label}"
     def _build(self):
         root = ttk.Frame(self, padding=12); root.pack(fill="both", expand=True); root.columnconfigure(1, weight=1)
-        self.input_entry = self._row(root, 0, "Input file", self.input_var, self._browse_input); self._folder_row(root, 1); self.filename_entry = self._row(root, 2, "Output filename", self.filename_var, None)
-        ttk.Label(root, text="Whisper model").grid(row=3, column=0, sticky="w", pady=5); ttk.Combobox(root, textvariable=self.model_var, values=MODEL_NAMES, state="readonly").grid(row=3, column=1, sticky="ew", pady=5); self.download_button = ttk.Button(root, text="Download model", command=self._download); self.download_button.grid(row=3, column=2, padx=5); self.setup_button = ttk.Button(root, text="⚙", width=3, command=self._open_setup); self.setup_button.grid(row=0, column=3, padx=(8, 0)); self._job_controls.append(self.setup_button)
+        self._meeting_row(root, 0); self.input_entry = self._row(root, 1, "Input file", self.input_var, self._browse_input); self._folder_row(root, 2); self.filename_entry = self._row(root, 3, "Output filename", self.filename_var, None)
+        ttk.Label(root, text="Whisper model").grid(row=4, column=0, sticky="w", pady=5); ttk.Combobox(root, textvariable=self.model_var, values=MODEL_NAMES, state="readonly").grid(row=4, column=1, sticky="ew", pady=5); self.download_button = ttk.Button(root, text="Download model", command=self._download); self.download_button.grid(row=4, column=2, padx=5); self.setup_button = ttk.Button(root, text="⚙", width=3, command=self._open_setup); self.setup_button.grid(row=1, column=3, padx=(8, 0)); self._job_controls.append(self.setup_button)
         self.retain = tk.BooleanVar(); self.include_timestamps = tk.BooleanVar(value=True); self.open_after = tk.BooleanVar(value=True); self.identify_speakers = tk.BooleanVar(value=False); self.rename_source = tk.BooleanVar(value=True)
-        self.progress = ttk.Progressbar(root, mode="determinate"); self.progress.grid(row=4, column=0, columnspan=4, sticky="ew", pady=8); ttk.Label(root, textvariable=self.status_var).grid(row=5, column=0, columnspan=4, sticky="w")
-        self.log = tk.Text(root, height=15, state="disabled", wrap="word"); self.log.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=8); root.rowconfigure(6, weight=1)
-        self.new_button = ttk.Button(root, text="New transcription", command=self._new_transcription); self.new_button.grid(row=7, column=0, sticky="w"); self.transcribe_button = ttk.Button(root, text="Transcribe", command=self._start, state="disabled"); self.transcribe_button.grid(row=7, column=1, sticky="e"); self.cancel_button = ttk.Button(root, text="Cancel", command=self._cancel, state="disabled"); self.cancel_button.grid(row=7, column=2, padx=5); self.append_button = ttk.Button(root, text="Add content", command=self._append_content, state="disabled"); self.append_button.grid(row=7, column=3, padx=5)
+        self.progress = ttk.Progressbar(root, mode="determinate"); self.progress.grid(row=5, column=0, columnspan=4, sticky="ew", pady=8); ttk.Label(root, textvariable=self.status_var).grid(row=6, column=0, columnspan=4, sticky="w")
+        self.log = tk.Text(root, height=15, state="disabled", wrap="word"); self.log.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=8); root.rowconfigure(7, weight=1)
+        self.new_button = ttk.Button(root, text="New transcription", command=self._new_transcription); self.new_button.grid(row=8, column=0, sticky="w"); self.transcribe_button = ttk.Button(root, text="Transcribe", command=self._start, state="disabled"); self.transcribe_button.grid(row=8, column=1, sticky="e"); self.cancel_button = ttk.Button(root, text="Cancel", command=self._cancel, state="disabled"); self.cancel_button.grid(row=8, column=2, padx=5); self.append_button = ttk.Button(root, text="Add content", command=self._append_content, state="disabled"); self.append_button.grid(row=8, column=3, padx=5)
+
+    def _meeting_row(self, parent, row):
+        ttk.Label(parent, text="Today's Outlook meeting").grid(row=row, column=0, sticky="w", pady=5)
+        self.meeting_combo = ttk.Combobox(parent, textvariable=self.meeting_var, state="disabled")
+        self.meeting_combo.grid(row=row, column=1, sticky="ew", pady=5)
+        self.meeting_combo.bind("<<ComboboxSelected>>", self._select_outlook_meeting)
+        self.refresh_meetings_button = ttk.Button(parent, text="Refresh", command=self._refresh_outlook_meetings)
+        self.refresh_meetings_button.grid(row=row, column=2, padx=5)
+        self._job_controls.extend([self.meeting_combo, self.refresh_meetings_button])
     def _row(self, parent, row, label, variable, command):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5); entry = ttk.Entry(parent, textvariable=variable); entry.grid(row=row, column=1, sticky="ew", pady=5)
         if command:
@@ -51,8 +62,94 @@ class App(tk.Tk):
         return entry
     def _folder_row(self, parent, row):
         ttk.Label(parent, text="Output folder").grid(row=row, column=0, sticky="w", pady=5); self.folder_combo = ttk.Combobox(parent, textvariable=self.folder_var, values=self.output_history.locations, state="normal"); self.folder_combo.grid(row=row, column=1, sticky="ew", pady=5); button = ttk.Button(parent, text="Browse", command=self._browse_folder); button.grid(row=row, column=2, padx=5); self._job_controls.append(button)
+
+    def _load_today_outlook_meetings(self):
+        if self._outlook_fetch_started:
+            return
+        self._outlook_fetch_started = True
+        self.outlook_loading = True
+        if getattr(self, "refresh_meetings_button", None):
+            self.refresh_meetings_button.configure(state="disabled")
+        self.meeting_var.set("Loading today's meetings…")
+
+        def work():
+            try:
+                self.events.put(("outlook_meetings", today_meetings()))
+            except Exception as exc:
+                self.events.put(("outlook_error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _refresh_outlook_meetings(self):
+        if self.outlook_loading:
+            return
+        self._outlook_fetch_started = False
+        self._load_today_outlook_meetings()
+
+    def _set_today_outlook_meetings(self, meetings):
+        self.outlook_loading = False
+        self.outlook_ready = True
+        self.today_outlook_meetings = meetings
+        values = [meeting.display for meeting in meetings]
+        self.meeting_combo.configure(values=values, state="readonly")
+        self.refresh_meetings_button.configure(state="normal")
+        self.meeting_var.set("Select a meeting (optional)" if values else "No Outlook meetings today")
+
+    def _select_outlook_meeting(self, _event=None):
+        selected = next((meeting for meeting in self.today_outlook_meetings if meeting.display == self.meeting_var.get()), None)
+        if selected is None:
+            return
+        self.selected_outlook_meeting = selected
+        self.expected_speakers_var.set(", ".join(selected.possible_speakers))
+        saved = self.meeting_output_settings.get(selected.subject)
+        filename_base = saved["filename_base"] if saved else selected.subject
+        if saved:
+            self.folder_var.set(saved["output_folder"])
+        self.filename_var.set(f"{filename_base}-{self._meeting_date(selected):%Y%m%d}.md")
+        self.filename_templates.remember(filename_base)
+        self._write_log(f"Selected Outlook meeting: {selected.subject}. Possible speakers were added to Expected speakers.")
+
+    def _accept_speaker_name_selection(self, event, combo, combos, names, recent_names):
+        values = list(combo.cget("values"))
+        index = combo.current()
+        if 0 <= index < len(values):
+            combo.set(values[index])
+        elif values and combo.get().casefold() not in {value.casefold() for value in values}:
+            # Some Tk versions report current() as -1 for a mouse selection
+            # made from a just-refreshed type-ahead list. Commit the visible
+            # first suggestion instead of leaving the search text (for
+            # example, "JO") in the field.
+            combo.set(values[0])
+        self._remember_speaker_name(combo, combos, names, recent_names)
+        return "break"
+
+    def _meeting_date(self, meeting):
+        source = Path(self.input_var.get())
+        if source.is_file():
+            return datetime.fromtimestamp(source.stat().st_mtime)
+        return meeting.start
+
+    def _remember_selected_meeting_output(self):
+        meeting = self.selected_outlook_meeting
+        folder = self.folder_var.get().strip()
+        if meeting is None or not folder:
+            return
+        stem = Path(self.filename_var.get()).stem
+        base = re.sub(r"[-_]\d{8}$", "", stem).strip(" -_") or meeting.subject
+        self.meeting_output_settings.remember(meeting.subject, folder, base)
     def _configuration_preferences(self):
         return {"language": self.language_var.get(), "whisper_model": self.model_var.get(), "expected_speakers": self.expected_speakers_var.get(), "retain_wav": self.retain.get(), "include_timestamps": self.include_timestamps.get(), "open_after": self.open_after.get(), "identify_speakers": self.identify_speakers.get(), "rename_source": self.rename_source.get()}
+
+    def _load_preferences(self):
+        preferences = PreferencesSettings().values
+        if isinstance(preferences.get("language"), str): self.language_var.set(preferences["language"])
+        if preferences.get("whisper_model") in MODEL_NAMES: self.model_var.set(preferences["whisper_model"])
+        if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
+        for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source)):
+            if isinstance(preferences.get(key), bool): variable.set(preferences[key])
+
+    def _save_preferences(self):
+        PreferencesSettings().save(self._configuration_preferences())
     def _export_configuration(self):
         path = filedialog.asksaveasfilename(title=self._window_title("Export configuration"), defaultextension=".tfconfig", filetypes=[("TranscriptForge configuration", "*.tfconfig"), ("All files", "*.*")])
         if not path:
@@ -78,7 +175,7 @@ class App(tk.Tk):
                 if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
                 for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source)):
                     if isinstance(preferences.get(key), bool): variable.set(preferences[key])
-            self.filename_templates.load()
+            self.filename_templates.load(); self._save_preferences()
             self._write_log(f"Imported configuration: {result.get('profiles', 0)} new voice samples and {result.get('rejections', 0)} sample decisions.")
             messagebox.showinfo(self._window_title("Configuration imported"), f"Imported {result.get('profiles', 0)} new voice samples and {result.get('rejections', 0)} sample decisions.\n\nThis PC's folder settings and histories were left unchanged.", parent=self)
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
@@ -112,7 +209,10 @@ class App(tk.Tk):
             dialog.grab_release(); dialog.destroy()
         ttk.Button(template_controls, text="Add to list", command=add_template).pack(side="left"); ttk.Button(template_controls, text="Use for output filename", command=use_template).pack(side="left", padx=6)
         transfer = ttk.LabelFrame(frame, text="Transfer to another PC", padding=8); transfer.pack(fill="x", pady=(14, 0)); ttk.Label(transfer, text="Transfers preferences, filename templates, and speaker training data. Computer-specific paths and histories stay local.", wraplength=420).pack(anchor="w"); transfer_buttons = ttk.Frame(transfer); transfer_buttons.pack(fill="x", pady=(8, 0)); ttk.Button(transfer_buttons, text="Export configuration", command=self._export_configuration).pack(side="left"); ttk.Button(transfer_buttons, text="Import configuration", command=self._import_configuration).pack(side="left", padx=6)
-        controls = ttk.Frame(frame); controls.pack(fill="x", pady=(14, 0)); ttk.Button(controls, text="Manage profiles", command=self._manage_profiles).pack(side="left"); ttk.Button(controls, text="View history", command=self._show_history).pack(side="left", padx=6); ttk.Button(controls, text="Close", command=lambda: (dialog.grab_release(), dialog.destroy())).pack(side="right")
+        controls = ttk.Frame(frame); controls.pack(fill="x", pady=(14, 0)); ttk.Button(controls, text="Manage profiles", command=self._manage_profiles).pack(side="left"); ttk.Button(controls, text="View history", command=self._show_history).pack(side="left", padx=6)
+        def close_setup():
+            self._save_preferences(); dialog.grab_release(); dialog.destroy()
+        ttk.Button(controls, text="Close", command=close_setup).pack(side="right")
     def _show_history(self):
         dialog = tk.Toplevel(self); dialog.title(self._window_title("Transcription history")); dialog.transient(self); dialog.geometry("1200x560"); dialog.minsize(800, 360)
         frame = ttk.Frame(dialog, padding=12); frame.pack(fill="both", expand=True)
@@ -241,13 +341,17 @@ class App(tk.Tk):
         installed = model_available(self.model_var.get())
         self.download_button.configure(text="Model installed" if installed else "Download model", state="disabled" if installed else "normal")
     def _start(self):
+        if self.outlook_loading:
+            return messagebox.showinfo(self._window_title("Outlook meetings still loading"), "Today's Outlook meetings are still loading. Please wait a moment, or use Refresh before starting transcription.", parent=self)
         if getattr(self, "awaiting_transcription", False):
             return self._confirm_transcription()
+        self._save_preferences()
         source = Path(self.input_var.get()); output = Path(self.folder_var.get()) / self.filename_var.get(); output = output.with_suffix(".md")
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS: return messagebox.showerror(self._window_title("Invalid input"), "Choose an existing supported audio or video file.")
         if output.resolve() == source.resolve(): return messagebox.showerror(self._window_title("Invalid output"), "The output must not overwrite the input.")
         if output.exists() and not messagebox.askyesno(self._window_title("Overwrite?"), f"Replace {output.name}?"): return
         if not model_available(self.model_var.get()): return messagebox.showerror(self._window_title("Model unavailable"), "Download the selected model before transcribing.")
+        self._remember_selected_meeting_output()
         rename_target = source.with_name(output.stem + source.suffix)
         self.rename_overwrite = False
         if self.rename_source.get() and rename_target.resolve() != source.resolve() and rename_target.exists():
@@ -262,6 +366,7 @@ class App(tk.Tk):
             return messagebox.showerror(self._window_title("Invalid output"), "The output must not overwrite the input.")
         if output.exists() and not messagebox.askyesno(self._window_title("Overwrite?"), f"Replace {output.name}?"):
             return
+        self._remember_selected_meeting_output()
         rename_overwrite = False; rename_target = source.with_name(output.stem + source.suffix)
         if self.rename_source.get() and rename_target.resolve() != source.resolve() and rename_target.exists():
             if not messagebox.askyesno(self._window_title("Replace existing media?"), f"Replace the existing media file?\n\n{rename_target}"):
@@ -318,14 +423,46 @@ class App(tk.Tk):
                     SampleRejectionStore().add(embedding, reason, note.get("1.0", "end"), str(getattr(self, "active_source", "")))
                 dialog.grab_release(); dialog.destroy(); self._write_log(f"Removed sample from {cluster.identifier}: {removed[0]:.2f}s-{removed[1]:.2f}s ({reason})"); self._render_sample_controls(parent, self.speaker_review_source, cluster)
             buttons = ttk.Frame(frame); buttons.pack(fill="x"); ttk.Button(buttons, text="Cancel", command=lambda: (dialog.grab_release(), dialog.destroy())).pack(side="right", padx=4); ttk.Button(buttons, text="Remove sample", command=confirm).pack(side="right")
-    def _filter_speaker_name_combo(self, event, combo, names, recent_names):
-        if event.keysym in {
-            "Up", "Down", "Left", "Right", "Return", "Escape", "Tab",
-            "Home", "End", "Shift_L", "Shift_R", "Control_L", "Control_R",
-            "Alt_L", "Alt_R",
-        }:
+    def _update_speaker_name_suggestions(self, event, combo, names, recent_names):
+        if event.keysym in {"Up", "Down", "Return", "Escape", "Tab"}:
             return
-        combo.configure(values=filter_speaker_name_choices(names, combo.get(), recent_names))
+        suggestions = speaker_name_suggestions(names, combo.get(), recent_names)
+        combo._tf_suggestions = suggestions
+        combo._tf_suggestion_index = -1
+        combo.configure(values=suggestions)
+        if suggestions:
+            combo.after_idle(lambda: combo.tk.call("ttk::combobox::Post", str(combo)))
+
+    def _navigate_speaker_name_suggestions(self, event, combo, names, recent_names, combos):
+        suggestions = getattr(combo, "_tf_suggestions", None)
+        if not suggestions:
+            suggestions = speaker_name_suggestions(names, combo.get(), recent_names)
+            combo._tf_suggestions = suggestions
+            combo.configure(values=suggestions)
+        if event.keysym in {"Up", "Down"}:
+            if not suggestions:
+                return "break"
+            index = getattr(combo, "_tf_suggestion_index", -1)
+            if event.keysym == "Down":
+                index = min(index + 1, len(suggestions) - 1)
+            else:
+                index = max(index - 1, 0)
+            combo._tf_suggestion_index = index
+            combo.set(suggestions[index])
+            combo.selection_range(0, tk.END)
+            return "break"
+        if event.keysym == "Return":
+            index = getattr(combo, "_tf_suggestion_index", -1)
+            if suggestions and index >= 0:
+                combo.set(suggestions[index])
+            elif suggestions and combo.get().casefold() not in {name.casefold() for name in suggestions}:
+                combo.set(suggestions[0])
+            self._remember_speaker_name(combo, combos, names, recent_names)
+            combo.tk.call("ttk::combobox::Unpost", str(combo))
+            return "break"
+        if event.keysym == "Escape":
+            combo.tk.call("ttk::combobox::Unpost", str(combo))
+            return "break"
 
     @staticmethod
     def _remember_speaker_name(combo, combos, names, recent_names):
@@ -394,15 +531,25 @@ class App(tk.Tk):
             )
             combo.bind(
                 "<KeyRelease>",
-                lambda event, widget=combo: self._filter_speaker_name_combo(
+                lambda event, widget=combo: self._update_speaker_name_suggestions(
                     event, widget, existing_names, recent_names
                 ),
             )
             remember = lambda _event, widget=combo: self._remember_speaker_name(
                 widget, name_combos, existing_names, recent_names
             )
-            combo.bind("<<ComboboxSelected>>", remember)
-            combo.bind("<Return>", remember)
+            combo.bind(
+                "<<ComboboxSelected>>",
+                lambda event, widget=combo: self._accept_speaker_name_selection(
+                    event, widget, name_combos, existing_names, recent_names
+                ),
+            )
+            combo.bind(
+                "<KeyPress>",
+                lambda event, widget=combo: self._navigate_speaker_name_suggestions(
+                    event, widget, existing_names, recent_names, name_combos
+                ),
+            )
             combo.bind(
                 "<FocusOut>",
                 lambda event, widget=combo, original=suggestion: (
@@ -451,6 +598,8 @@ class App(tk.Tk):
                 elif kind == "status": self.status_var.set(value)
                 elif kind == "log": self._write_log(str(value))
                 elif kind == "model_ready": self._update_model_button()
+                elif kind == "outlook_meetings": self._set_today_outlook_meetings(value)
+                elif kind == "outlook_error": self.outlook_loading = False; self.outlook_ready = True; self.meeting_combo.configure(values=(), state="disabled"); self.refresh_meetings_button.configure(state="normal"); self.meeting_var.set("Outlook calendar unavailable"); self._write_log(f"Could not read today's Outlook meetings: {value}")
                 elif kind == "speaker_review": self._show_speaker_review(value)
                 elif kind == "ready": self.awaiting_transcription = True; self._set_job_fields_enabled(True, include_input=False); self.transcribe_button.configure(state="normal", text="Start transcription"); self.status_var.set(str(value)); self._write_log(str(value))
                 elif kind == "done": self.status_var.set("Completed"); self._write_log(f"Wrote {value}"); self._remember_output_location(Path(value).parent); self._record_history("completed", Path(value)); self._complete(); self.append_button.configure(state="normal"); self._open_output(value) if self.open_after.get() else None
@@ -465,7 +614,7 @@ class App(tk.Tk):
         self.filename_entry.configure(state=state); self.folder_combo.configure(state=state)
         for control in self._job_controls:
             if (include_setup or control is not self.setup_button) and (include_input or control is not self.input_browse_button):
-                control.configure(state=state)
+                control.configure(state=("readonly" if enabled and control is self.meeting_combo else state))
     def _reset(self): self.awaiting_transcription = False; self._set_job_fields_enabled(True); self.transcribe_button.configure(state="normal" if self.input_var.get() else "disabled", text="Transcribe"); self.new_button.configure(state="normal"); self.cancel_button.configure(state="disabled")
     def _complete(self): self.awaiting_transcription = False; self._set_job_fields_enabled(True); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.new_button.configure(state="normal"); self.cancel_button.configure(state="disabled")
     def _record_history(self, status, output=None):
@@ -477,7 +626,7 @@ class App(tk.Tk):
             except OSError as exc:
                 self._write_log(f"Could not update recording history: {exc}")
     def _new_transcription(self):
-        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
+        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.meeting_var.set("Select a meeting (optional)" if self.today_outlook_meetings else "No Outlook meetings today"); self.selected_outlook_meeting = None; self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
     def _append_content(self):
         path = getattr(self, "active_output", None)
         if not path or not Path(path).is_file():

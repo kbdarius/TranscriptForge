@@ -27,6 +27,8 @@ PROFILE_MATCH_MARGIN = 0.04
 PROFILE_SCHEMA_VERSION = 3
 ACTIVE_PROFILE_LIMIT = 60
 ACTIVE_PROFILE_SOURCE_LIMIT = 12
+ACTIVE_PROFILE_RECENT_QUOTA = 12
+ACTIVE_PROFILE_RECENT_SOURCE_LIMIT = 6
 ACTIVE_PROFILE_MIN_QUALITY = 0.35
 ACTIVE_PROFILE_DIVERSITY_THRESHOLD = 0.96
 PROFILE_GUIDED_ASSIGN_THRESHOLD = 0.72
@@ -35,6 +37,7 @@ CLUSTER_MATCH_THRESHOLD = 0.82
 CLUSTER_MERGE_THRESHOLD = 0.86
 MIN_VOICE_SECONDS = 1.5
 MAX_SAMPLE_SECONDS = 6.0
+MIN_REVIEW_QUALITY = 0.35
 FRAME_SECONDS = 0.25
 
 
@@ -178,8 +181,38 @@ class SpeakerProfileStore:
         candidates.sort(key=lambda item: (item[1], -item[0]), reverse=True)
         selected: list[int] = []
         source_counts: dict[str, int] = {}
+
+        # Keep recent, user-confirmed samples visible to the recognizer. The
+        # previous quality-only ordering could fill all 60 slots with older
+        # samples, leaving correctly labeled newer meetings archived but
+        # unused. Recent samples are still capped per source and the normal
+        # diversity pass fills the remainder.
+        recent_by_source: dict[str, list[tuple[int, float, str]]] = {}
+        source_latest: dict[str, str] = {}
+        for index, quality, source in candidates:
+            details = metadata[index] if index < len(metadata) else {}
+            if not details.get("reviewed") or source == "legacy":
+                continue
+            recent_by_source.setdefault(source, []).append((index, quality, source))
+            added = str(details.get("added", ""))
+            if added > source_latest.get(source, ""):
+                source_latest[source] = added
+        recent_sources = sorted(recent_by_source, key=lambda source: source_latest.get(source, ""), reverse=True)
+        for source in recent_sources:
+            if len(selected) >= ACTIVE_PROFILE_RECENT_QUOTA:
+                break
+            for candidate in recent_by_source[source][:ACTIVE_PROFILE_RECENT_SOURCE_LIMIT]:
+                if len(selected) >= ACTIVE_PROFILE_RECENT_QUOTA:
+                    break
+                index = candidate[0]
+                if index not in selected:
+                    selected.append(index)
+                    source_counts[source] = source_counts.get(source, 0) + 1
+
         for index, _quality, source in candidates:
             if len(selected) >= ACTIVE_PROFILE_LIMIT or source_counts.get(source, 0) >= ACTIVE_PROFILE_SOURCE_LIMIT:
+                continue
+            if index in selected:
                 continue
             if selected and max(cosine_similarity(vectors[index], vectors[item]) for item in selected) >= ACTIVE_PROFILE_DIVERSITY_THRESHOLD:
                 continue
@@ -521,11 +554,16 @@ def analyze_speakers(samples: np.ndarray, rate: int, cancel=None, log=None, prog
     for index, (start, end) in enumerate(ranges):
         if cancel.is_set():
             raise InterruptedError("Speaker analysis cancelled")
+        quality = _interval_quality(samples, rate, start, end)
+        if quality < MIN_REVIEW_QUALITY:
+            log(f"Skipped a quiet or low-quality voice interval at {start:.2f}s-{end:.2f}s")
+            progress((index + 1) / len(ranges))
+            continue
         waveform = samples[int(start * rate):int(end * rate)]
         embedding = np.asarray(encoder.embed_utterance(waveform), dtype=np.float32)
         if embedding.size == 0:
             continue
-        observations.append((start, end, embedding, _interval_quality(samples, rate, start, end)))
+        observations.append((start, end, embedding, quality))
         progress((index + 1) / len(ranges))
     store = SpeakerProfileStore()
     excluded_sources = [source] if source else None

@@ -19,6 +19,43 @@ def settings_dir() -> Path:
     return path
 
 
+class PreferencesSettings:
+    """Persist portable Setup preferences without computer-specific paths."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "preferences.json"
+        self.values: dict = {}
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                self.values = value
+        except (OSError, ValueError, TypeError):
+            self.values = {}
+
+    def save(self, values: dict) -> None:
+        self.values = dict(values)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix="preferences-", suffix=".tmp", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(self.values, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
 class OutputLocationHistory:
     def __init__(self, path: Path | None = None):
         self.path = path or settings_dir() / "output-locations.json"
@@ -131,6 +168,68 @@ class FilenameTemplateSettings:
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 json.dump(self.names[:MAX_FILENAME_TEMPLATES], handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
+class MeetingOutputSettings:
+    """Remember output choices locally for a recurring Outlook meeting title."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "meeting-output-settings.json"
+        self.records: dict[str, dict[str, str]] = {}
+        self.load()
+
+    @staticmethod
+    def _key(title: str) -> str:
+        return " ".join(str(title).split()).casefold()
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                self.records = {
+                    key: item for key, item in value.items()
+                    if isinstance(key, str) and isinstance(item, dict)
+                    and isinstance(item.get("title"), str)
+                    and isinstance(item.get("output_folder"), str)
+                    and isinstance(item.get("filename_base"), str)
+                }
+        except (OSError, ValueError, TypeError):
+            self.records = {}
+
+    def get(self, title: str) -> dict[str, str] | None:
+        return self.records.get(self._key(title))
+
+    def remember(self, title: str, output_folder: Path | str, filename_base: str) -> None:
+        clean_title = " ".join(str(title).split())
+        clean_base = " ".join(str(filename_base).split())
+        if not clean_title or not clean_base:
+            return
+        self.records[self._key(clean_title)] = {
+            "title": clean_title,
+            "output_folder": str(Path(output_folder).expanduser()),
+            "filename_base": clean_base,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.save()
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix="meeting-output-settings-", suffix=".tmp", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(self.records, handle, ensure_ascii=False, indent=2)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())

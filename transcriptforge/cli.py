@@ -11,10 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .audio import read_wav
+from .configuration import export_configuration, import_configuration
 from .media import SUPPORTED_EXTENSIONS, decode_to_wav, temporary_work_dir
 from .models_cache import MODEL_NAMES, cache_dir, download_model, load_model, model_available
 from .output import atomic_write, render_markdown
-from .settings import OutputLocationHistory, settings_dir
+from .settings import FilenameTemplateSettings, OutputLocationHistory, PreferencesSettings, settings_dir
 from .speakers import SpeakerProfileStore, analyze_speakers, apply_speaker_names, fill_unknown_speakers_from_neighbors, refine_unresolved_clusters, save_confirmed_profiles, write_review_samples
 from .transcription import transcribe_samples
 from .version import __version__
@@ -193,6 +194,17 @@ def _diagnose(args) -> int:
     return 0
 
 
+def _configuration(args) -> int:
+    if args.configuration_action == "export":
+        path = Path(args.path).expanduser().resolve()
+        export_configuration(path, PreferencesSettings().values, FilenameTemplateSettings().names)
+        _emit(args.json_events, "completed", path=str(path), message=f"Exported configuration to {path}")
+        return 0
+    result = import_configuration(Path(args.path).expanduser().resolve())
+    _emit(args.json_events, "completed", message="Imported configuration", **result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m transcriptforge.cli", description="Local TranscriptForge command-line automation")
     parser.add_argument("--json-events", action="store_true", help="Emit newline-delimited JSON events for automation")
@@ -200,6 +212,12 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe = subparsers.add_parser("transcribe", help="Transcribe a local media file")
     transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true")
     diagnose = subparsers.add_parser("diagnose", help="Analyze speaker clusters and profile matches without transcribing or changing profiles"); diagnose.add_argument("input"); diagnose.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit analysis to this known name; repeat for multiple speakers")
+    configuration = subparsers.add_parser("config", help="Export or import portable local configuration")
+    configuration_sub = configuration.add_subparsers(dest="configuration_action", required=True)
+    config_export = configuration_sub.add_parser("export", help="Export preferences, templates, speaker profiles, and sample decisions")
+    config_export.add_argument("path")
+    config_import = configuration_sub.add_parser("import", help="Import a portable configuration and merge its learning data")
+    config_import.add_argument("path")
     models = subparsers.add_parser("models", help="Inspect or download Whisper models"); models_sub = models.add_subparsers(dest="models_action", required=True); models_sub.add_parser("list"); download = models_sub.add_parser("download"); download.add_argument("name", choices=MODEL_NAMES)
     profiles = subparsers.add_parser("profiles", help="Inspect or manage local speaker profiles"); profiles_sub = profiles.add_subparsers(dest="profiles_action", required=True); profiles_sub.add_parser("list"); profiles_sub.add_parser("path"); remove = profiles_sub.add_parser("remove"); remove.add_argument("name"); quarantine = profiles_sub.add_parser("quarantine-source", help="Keep embeddings archived but exclude one recording from active matching"); quarantine.add_argument("source"); quarantine.add_argument("--name", dest="names", action="append", default=[], help="Limit quarantine to this speaker; repeat as needed"); quarantine.add_argument("--reason", default="source quarantined after review")
     return parser
@@ -210,6 +228,7 @@ def main(argv=None) -> int:
     try:
         if args.command == "transcribe": return _transcribe(args)
         if args.command == "diagnose": return _diagnose(args)
+        if args.command == "config": return _configuration(args)
         if args.command == "models": return _models(args)
         return _profiles(args)
     except Exception as exc:

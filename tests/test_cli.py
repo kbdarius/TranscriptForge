@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from transcriptforge.cli import _emit, _review_names, build_parser
-from transcriptforge.settings import FilenameTemplateSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
+from transcriptforge.settings import FilenameTemplateSettings, MeetingOutputSettings, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 
 
 class CliTests(unittest.TestCase):
@@ -46,6 +46,27 @@ class CliTests(unittest.TestCase):
             settings.set(Path(directory))
             loaded = RecordingFolderSettings(path)
             self.assertEqual(loaded.folder, str(Path(directory).resolve()))
+
+    def test_meeting_output_settings_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "meeting-output-settings.json"
+            settings = MeetingOutputSettings(path)
+            settings.remember("SW Daily Standup", Path(directory) / "transcripts", "SW Daily Standup")
+            loaded = MeetingOutputSettings(path).get("sw   daily standup")
+            self.assertEqual(loaded["filename_base"], "SW Daily Standup")
+            self.assertEqual(loaded["output_folder"], str(Path(directory) / "transcripts"))
+
+    def test_preferences_settings_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preferences.json"
+            PreferencesSettings(path).save({"identify_speakers": True, "language": "en"})
+            self.assertEqual(PreferencesSettings(path).values["identify_speakers"], True)
+
+    def test_config_commands_parse(self):
+        exported = build_parser().parse_args(["config", "export", "example.tfconfig"])
+        imported = build_parser().parse_args(["config", "import", "example.tfconfig"])
+        self.assertEqual(exported.configuration_action, "export")
+        self.assertEqual(imported.configuration_action, "import")
 
     def test_recording_history_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

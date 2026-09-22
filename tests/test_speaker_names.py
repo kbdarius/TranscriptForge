@@ -2,6 +2,7 @@ import unittest
 
 from transcriptforge.speaker_names import (
     filter_speaker_name_choices,
+    speaker_name_suggestions,
     speaker_name_choices,
 )
 
@@ -30,6 +31,12 @@ class SpeakerNameChoiceTests(unittest.TestCase):
             ["Brian Lelacheur"], "new participant", ["New Participant"]
         )
         self.assertEqual(choices, ["New Participant"])
+
+    def test_suggestions_are_limited_to_three_visible_matches(self):
+        choices = speaker_name_suggestions(
+            ["Alex Yu", "Alexandra King", "Alexis Lee", "Alex Moreno"], "alex"
+        )
+        self.assertEqual(choices, ["Alex Moreno", "Alex Yu", "Alexandra King"])
 
 
 if __name__ == "__main__":

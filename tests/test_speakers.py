@@ -50,6 +50,20 @@ class SpeakerTests(unittest.TestCase):
             self.assertEqual(len(loaded.profiles["Alex"]), 25)
             self.assertLessEqual(len(loaded.active_vectors("Alex")), 12)
 
+    def test_recent_reviewed_samples_enter_active_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SpeakerProfileStore(Path(directory) / "profiles.json")
+            dimension = 70
+            for index in range(60):
+                vector = [1.0 if item == index else 0.0 for item in range(dimension)]
+                store.add_confirmed_embedding("Alex", vector, metadata={"source": "old-meeting", "quality": 0.8})
+            for index in range(60, 66):
+                vector = [1.0 if item == index else 0.0 for item in range(dimension)]
+                store.add_confirmed_embedding("Alex", vector, metadata={"source": "new-meeting", "quality": 0.6, "reviewed": True})
+            store.rebuild_active_indices()
+            active = store.active_profile_indices("Alex")
+            self.assertTrue(any(index >= 60 for index in active))
+
     def test_match_margin_can_reject_ambiguous_speakers(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SpeakerProfileStore(Path(directory) / "profiles.json")

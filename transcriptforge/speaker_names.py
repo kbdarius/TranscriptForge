@@ -38,3 +38,10 @@ def filter_speaker_name_choices(
         for choice in choices
         if choice and normalized_query in choice.casefold()
     ]
+
+
+def speaker_name_suggestions(
+    names: list[str], query: str, recent_names: list[str] | None = None, limit: int = 3
+) -> list[str]:
+    """Return the small visible type-ahead list used by the review UI."""
+    return filter_speaker_name_choices(names, query, recent_names)[:max(1, limit)]

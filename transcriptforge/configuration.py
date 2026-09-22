@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .settings import FilenameTemplateSettings, SampleRejectionStore, settings_dir
+from .settings import FilenameTemplateSettings, PreferencesSettings, SampleRejectionStore, settings_dir
 from .speakers import SpeakerProfileStore
 
 PACKAGE_VERSION = 1
@@ -53,7 +53,7 @@ def export_configuration(path: Path, preferences: dict, filename_templates: list
         "format": "TranscriptForge configuration",
         "version": PACKAGE_VERSION,
         "includes": ["preferences", "filename_templates", "speaker_profiles", "speaker_sample_rejections"],
-        "excludes": ["recording_folder", "output_location_history", "recording_history", "whisper_models", "audio", "transcripts"],
+        "excludes": ["recording_folder", "output_location_history", "meeting_output_settings", "recording_history", "whisper_models", "audio", "transcripts"],
     }
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as package:
         package.writestr(_MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -78,6 +78,8 @@ def import_configuration(path: Path, target_dir: Path | None = None) -> dict:
 
     if not isinstance(preferences, dict):
         preferences = {}
+    if preferences:
+        PreferencesSettings(target / "preferences.json").save(preferences)
     if not isinstance(templates, list):
         templates = []
     template_store = FilenameTemplateSettings(target / "filename-templates.json")
