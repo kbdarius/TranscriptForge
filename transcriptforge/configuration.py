@@ -89,6 +89,10 @@ def import_configuration(path: Path, target_dir: Path | None = None) -> dict:
     profile_store = SpeakerProfileStore(target / "speaker-profiles.json")
     imported_profiles = 0
     if isinstance(profile_payload, dict):
+        profile_store.import_name_decisions(
+            profile_payload.get("name_aliases", {}),
+            profile_payload.get("rejected_name_matches", []),
+        )
         source_profiles = profile_payload.get("profiles", {})
         source_metadata = profile_payload.get("embedding_metadata", {})
         if isinstance(source_profiles, dict):

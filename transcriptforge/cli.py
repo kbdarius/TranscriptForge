@@ -98,7 +98,7 @@ def _transcribe(args) -> int:
             analysis = None; names = {}
             if args.speakers:
                 _emit(args.json_events, "stage", message="Analyzing speaker voices")
-                analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers, source=source)
+                analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers or None, source=source)
                 if analysis.clusters:
                     profile_store = SpeakerProfileStore()
                     review_file = Path(args.speaker_review) if args.speaker_review else None
@@ -112,7 +112,7 @@ def _transcribe(args) -> int:
                     if not names and args.accept_suggestions:
                         names = {cluster.identifier: cluster.suggested_name or "" for cluster in analysis.clusters}
                     profile_store = save_confirmed_profiles(analysis, names, profile_store, {"source": str(source)})
-                    final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, names, profile_store, args.expected_speakers)
+                    final_names, unresolved, profile_store = refine_unresolved_clusters(analysis, names, profile_store, args.expected_speakers or None)
                     if unresolved and not args.accept_suggestions:
                         sample_files = write_review_samples(wav, unresolved, review_dir)
                         review_path = _review_path(args, output); _write_review(review_path, source, unresolved, final_names, sorted(profile_store.profiles), sample_files)
@@ -181,7 +181,7 @@ def _diagnose(args) -> int:
         raise ValueError("Input must be an existing supported audio or video file")
     with temporary_work_dir() as temporary:
         wav = decode_to_wav(source, Path(temporary)); samples, rate = read_wav(wav)
-        analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers, source=source)
+        analysis = analyze_speakers(samples, rate, log=lambda message: _emit(args.json_events, "log", message=message), progress=lambda value: _emit(args.json_events, "speaker_progress", value=value), expected_speakers=args.expected_speakers or None, source=source)
     store = SpeakerProfileStore()
     clusters = []
     for cluster in analysis.clusters:

@@ -14,3 +14,7 @@
 - Update `README.md` when user-visible behavior, dependencies, storage, or workflows change.
 - Do not commit generated recordings, decoded WAV files, models, voice profiles, or temporary output.
 
+## Project context
+
+- Keep `TRANSCRIPTFORGE_CONTEXT.md` aligned with the current architecture, features, and workflows.
+- Update the context file in the same change whenever adding a feature or changing an existing feature or user-facing workflow.

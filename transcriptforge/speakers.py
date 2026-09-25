@@ -52,12 +52,14 @@ class SpeakerCluster:
     sample_embeddings: list[list[float]] = field(default_factory=list)
     training_embeddings: list[list[float]] = field(default_factory=list)
     training_qualities: list[float] = field(default_factory=list)
+    over_limit: bool = False
 
 
 @dataclass
 class SpeakerAnalysis:
     clusters: list[SpeakerCluster]
     interval_labels: list[tuple[float, float, str]]
+    speaker_limit: int | None = None
 
 
 def profiles_path() -> Path:
@@ -88,6 +90,8 @@ class SpeakerProfileStore:
         self.profiles: dict[str, list[list[float]]] = {}
         self.embedding_metadata: dict[str, list[dict]] = {}
         self.active_indices: dict[str, list[int]] = {}
+        self.name_aliases: dict[str, str] = {}
+        self.rejected_name_matches: set[tuple[str, str]] = set()
         self.schema_version = PROFILE_SCHEMA_VERSION
         self.load()
 
@@ -122,6 +126,21 @@ class SpeakerProfileStore:
                 for name, indexes in raw_active.items()
                 if isinstance(indexes, list)
             } if isinstance(raw_active, dict) else {}
+            raw_aliases = payload.get("name_aliases", {})
+            self.name_aliases = {
+                self._name_key(alias): self._clean_name(canonical)
+                for alias, canonical in raw_aliases.items()
+                if isinstance(alias, str) and isinstance(canonical, str)
+                and self._name_key(alias) and self._clean_name(canonical)
+            } if isinstance(raw_aliases, dict) else {}
+            raw_rejections = payload.get("rejected_name_matches", [])
+            self.rejected_name_matches = {
+                tuple(sorted((self._name_key(pair[0]), self._name_key(pair[1]))))
+                for pair in raw_rejections
+                if isinstance(pair, list) and len(pair) == 2
+                and isinstance(pair[0], str) and isinstance(pair[1], str)
+                and self._name_key(pair[0]) and self._name_key(pair[1])
+            } if isinstance(raw_rejections, list) else set()
             self.rebuild_active_indices()
         except (OSError, ValueError, TypeError) as exc:
             # A bad profile file must not prevent transcription. Keep it in place
@@ -129,6 +148,8 @@ class SpeakerProfileStore:
             self.profiles = {}
             self.embedding_metadata = {}
             self.active_indices = {}
+            self.name_aliases = {}
+            self.rejected_name_matches = set()
 
     def save(self) -> None:
         if self.schema_version < PROFILE_SCHEMA_VERSION and self.path.is_file():
@@ -137,7 +158,15 @@ class SpeakerProfileStore:
                 shutil.copy2(self.path, backup)
         self.schema_version = PROFILE_SCHEMA_VERSION
         self.rebuild_active_indices()
-        payload = {"version": PROFILE_SCHEMA_VERSION, "updated": datetime.now(timezone.utc).isoformat(), "profiles": self.profiles, "embedding_metadata": self.embedding_metadata, "active_indices": self.active_indices}
+        payload = {
+            "version": PROFILE_SCHEMA_VERSION,
+            "updated": datetime.now(timezone.utc).isoformat(),
+            "profiles": self.profiles,
+            "embedding_metadata": self.embedding_metadata,
+            "active_indices": self.active_indices,
+            "name_aliases": self.name_aliases,
+            "rejected_name_matches": [list(pair) for pair in sorted(self.rejected_name_matches)],
+        }
         fd, temporary = tempfile.mkstemp(prefix="speaker-profiles-", suffix=".tmp", dir=self.path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
@@ -152,6 +181,179 @@ class SpeakerProfileStore:
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def _clean_name(name: str) -> str:
+        return " ".join(str(name).strip().split())
+
+    @classmethod
+    def _name_key(cls, name: str) -> str:
+        return cls._clean_name(name).casefold()
+
+    def canonical_name(self, name: str) -> str:
+        current = self._clean_name(name)
+        visited: set[str] = set()
+        while current:
+            key = self._name_key(current)
+            if key in visited:
+                break
+            visited.add(key)
+            canonical = self.name_aliases.get(key)
+            if not canonical or canonical == current:
+                break
+            current = canonical
+        return current
+
+    def name_match_was_rejected(self, left: str, right: str) -> bool:
+        pair = tuple(sorted((self._name_key(left), self._name_key(right))))
+        return pair in self.rejected_name_matches
+
+    def reject_name_match(self, left: str, right: str) -> None:
+        pair = tuple(sorted((self._name_key(left), self._name_key(right))))
+        if pair[0] and pair[1] and pair[0] != pair[1]:
+            self.rejected_name_matches.add(pair)
+            self.save()
+
+    def rename_profile(self, old_name: str, new_name: str, save: bool = True) -> bool:
+        old_key = self._name_key(old_name)
+        new_clean = self._clean_name(new_name)
+        source = next((name for name in self.profiles if self._name_key(name) == old_key), None)
+        if source is None or not new_clean or source == new_clean:
+            return False
+        if source.casefold() == new_clean.casefold():
+            existing_target = next(
+                (
+                    name for name in self.profiles
+                    if name != source and name.casefold() == new_clean.casefold()
+                ),
+                None,
+            )
+            source_vectors = list(self.profiles[source])
+            source_metadata = list(self.embedding_metadata.get(source, []))
+            if existing_target is not None:
+                if existing_target != new_clean:
+                    self.profiles[new_clean] = self.profiles.pop(existing_target)
+                    self.embedding_metadata[new_clean] = self.embedding_metadata.pop(existing_target, [])
+                target_vectors = self.profiles[new_clean]
+                target_metadata = self.embedding_metadata.setdefault(new_clean, [])
+                for index, vector in enumerate(source_vectors):
+                    if any(cosine_similarity(vector, existing) >= PROFILE_DUPLICATE_THRESHOLD for existing in target_vectors):
+                        continue
+                    target_vectors.append(vector)
+                    target_metadata.append(source_metadata[index] if index < len(source_metadata) else {})
+                del self.profiles[source]
+                self.embedding_metadata.pop(source, None)
+            else:
+                self.profiles[new_clean] = self.profiles.pop(source)
+                self.embedding_metadata[new_clean] = self.embedding_metadata.pop(source, [])
+            self.active_indices = {}
+            if save:
+                self.save()
+            return True
+
+        target = next((name for name in self.profiles if name.casefold() == new_clean.casefold()), new_clean)
+        if target != new_clean and target.casefold() == new_clean.casefold():
+            self.profiles[new_clean] = self.profiles.pop(target)
+            metadata = self.embedding_metadata.pop(target, [])
+            self.embedding_metadata[new_clean] = metadata
+            target = new_clean
+        vectors = list(self.profiles[source])
+        metadata = list(self.embedding_metadata.get(source, []))
+        target_vectors = self.profiles.setdefault(target, [])
+        target_metadata = self.embedding_metadata.setdefault(target, [])
+        for index, vector in enumerate(vectors):
+            if any(cosine_similarity(vector, existing) >= PROFILE_DUPLICATE_THRESHOLD for existing in target_vectors):
+                continue
+            target_vectors.append(vector)
+            target_metadata.append(metadata[index] if index < len(metadata) else {})
+
+        del self.profiles[source]
+        self.embedding_metadata.pop(source, None)
+        self.active_indices.pop(source, None)
+        self.active_indices = {}
+        if save:
+            self.save()
+        return True
+
+    def confirm_name_alias(self, profile_name: str, outlook_name: str) -> None:
+        old_name = self._clean_name(profile_name)
+        canonical = self._clean_name(outlook_name)
+        old_key = self._name_key(old_name)
+        canonical_key = self._name_key(canonical)
+        if not old_key or not canonical_key or old_key == canonical_key and old_name == canonical:
+            return
+
+        prior_canonical = self.canonical_name(old_name)
+        self.rename_profile(prior_canonical, canonical, save=False)
+        for alias, value in list(self.name_aliases.items()):
+            if self._name_key(value) in {old_key, self._name_key(prior_canonical)}:
+                self.name_aliases[alias] = canonical
+        self.name_aliases.pop(canonical_key, None)
+        if old_key != canonical_key or old_name != canonical:
+            self.name_aliases[old_key] = canonical
+        self.rejected_name_matches.discard(tuple(sorted((old_key, canonical_key))))
+        self.save()
+
+    def import_name_decisions(self, aliases, rejected_matches) -> bool:
+        changed = False
+        if isinstance(aliases, dict):
+            for alias, canonical in aliases.items():
+                if not isinstance(alias, str) or not isinstance(canonical, str):
+                    continue
+                alias_key = self._name_key(alias)
+                canonical_name = self._clean_name(canonical)
+                if (
+                    not alias_key
+                    or not canonical_name
+                    or alias_key in self.name_aliases
+                ):
+                    continue
+                self.name_aliases[alias_key] = canonical_name
+                self.rename_profile(alias, canonical_name, save=False)
+                changed = True
+        if isinstance(rejected_matches, list):
+            for pair in rejected_matches:
+                if not (
+                    isinstance(pair, list) and len(pair) == 2
+                    and isinstance(pair[0], str) and isinstance(pair[1], str)
+                ):
+                    continue
+                normalized = tuple(sorted((self._name_key(pair[0]), self._name_key(pair[1]))))
+                if normalized[0] and normalized[1] and normalized[0] != normalized[1]:
+                    if normalized not in self.rejected_name_matches:
+                        self.rejected_name_matches.add(normalized)
+                        changed = True
+        if changed:
+            self.save()
+        return changed
+
+    def delete_profile(self, name: str) -> bool:
+        keys = {self._name_key(name), self._name_key(self.canonical_name(name))}
+        keys.discard("")
+        removed = False
+        for profile_name in list(self.profiles):
+            if self._name_key(profile_name) not in keys:
+                continue
+            del self.profiles[profile_name]
+            self.embedding_metadata.pop(profile_name, None)
+            self.active_indices.pop(profile_name, None)
+            removed = True
+        aliases = {
+            alias: canonical
+            for alias, canonical in self.name_aliases.items()
+            if self._name_key(alias) not in keys and self._name_key(canonical) not in keys
+        }
+        rejected = {
+            pair for pair in self.rejected_name_matches
+            if not keys.intersection(pair)
+        }
+        changed = removed or aliases != self.name_aliases or rejected != self.rejected_name_matches
+        if changed:
+            self.name_aliases = aliases
+            self.rejected_name_matches = rejected
+            self.active_indices = {}
+            self.save()
+        return removed
 
     def _select_active_indices(self, name: str, excluded_sources: set[str] | None = None) -> list[int]:
         vectors = self.profiles.get(name, [])
@@ -254,10 +456,13 @@ class SpeakerProfileStore:
         return best_name, best_score
 
     def _profile_signatures(self, allowed_names: list[str] | None = None, excluded_sources: list[str | Path] | None = None) -> list[tuple[str, np.ndarray, np.ndarray, np.ndarray]]:
-        allowed = {" ".join(name.strip().split()).casefold() for name in allowed_names or [] if name.strip()}
+        allowed = None if allowed_names is None else {
+            self._name_key(self.canonical_name(name))
+            for name in allowed_names if self._clean_name(name)
+        }
         signatures = []
         for name in self.profiles:
-            if allowed and name.casefold() not in allowed:
+            if allowed is not None and self._name_key(self.canonical_name(name)) not in allowed:
                 continue
             vectors = self.active_vectors(name, excluded_sources)
             if not vectors:
@@ -316,7 +521,7 @@ class SpeakerProfileStore:
         return changed
 
     def add_confirmed_embedding(self, name: str, embedding: list[float], max_samples: int | None = None, metadata: dict | None = None) -> bool:
-        clean_name = " ".join(name.strip().split())
+        clean_name = self.canonical_name(name)
         if not clean_name or clean_name.lower() in {"unknown", "speaker", "none"}:
             return False
         vector = np.asarray(embedding, dtype=np.float32)
@@ -540,7 +745,36 @@ def _load_encoder():
         raise RuntimeError(f"Could not load the local speaker encoder: {exc}") from exc
 
 
-def analyze_speakers(samples: np.ndarray, rate: int, cancel=None, log=None, progress=None, expected_speakers: list[str] | None = None, source: str | Path | None = None) -> SpeakerAnalysis:
+def _mark_speaker_overflow(clusters: list[SpeakerCluster], max_speakers: int | None) -> None:
+    if max_speakers is None:
+        return
+    if isinstance(max_speakers, bool) or not isinstance(max_speakers, int) or max_speakers < 1:
+        raise ValueError("Maximum speakers must be a positive whole number")
+
+    def priority(cluster: SpeakerCluster):
+        has_profile_match = bool(
+            cluster.suggested_name
+            and cluster.suggested_name.casefold() not in {"unknown", "none", "speaker"}
+        )
+        voiced_seconds = sum(max(0.0, end - start) for start, end in cluster.intervals)
+        quality = sum(cluster.training_qualities)
+        return has_profile_match, voiced_seconds, quality, len(cluster.intervals)
+
+    primary = {cluster.identifier for cluster in sorted(clusters, key=priority, reverse=True)[:max_speakers]}
+    for cluster in clusters:
+        cluster.over_limit = cluster.identifier not in primary
+
+
+def analyze_speakers(
+    samples: np.ndarray,
+    rate: int,
+    cancel=None,
+    log=None,
+    progress=None,
+    expected_speakers: list[str] | None = None,
+    source: str | Path | None = None,
+    max_speakers: int | None = None,
+) -> SpeakerAnalysis:
     cancel = cancel or _NeverCancel()
     log = log or (lambda _: None)
     progress = progress or (lambda _: None)
@@ -589,7 +823,11 @@ def analyze_speakers(samples: np.ndarray, rate: int, cancel=None, log=None, prog
         output.append(SpeakerCluster(identifier, vector, intervals, samples_for_review, suggested, score, sample_embeddings, training, training_qualities))
         interval_labels.extend((start, end, identifier) for start, end in intervals)
         log(f"Detected {identifier} with {len(intervals)} voice samples")
-    return SpeakerAnalysis(output, sorted(interval_labels))
+    _mark_speaker_overflow(output, max_speakers)
+    overflow_count = sum(cluster.over_limit for cluster in output)
+    if overflow_count:
+        log(f"{overflow_count} distinct voice group(s) are above the soft speaker limit and will remain available for review.")
+    return SpeakerAnalysis(output, sorted(interval_labels), max_speakers)
 
 
 def save_confirmed_profiles(analysis: SpeakerAnalysis, names: dict[str, str], store: SpeakerProfileStore | None = None, metadata: dict | None = None, learn: dict[str, bool] | None = None) -> SpeakerProfileStore:

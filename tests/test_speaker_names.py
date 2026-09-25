@@ -2,8 +2,10 @@ import unittest
 
 from transcriptforge.speaker_names import (
     filter_speaker_name_choices,
+    similar_speaker_names,
     speaker_name_suggestions,
     speaker_name_choices,
+    speaker_name_similarity,
 )
 
 
@@ -37,6 +39,15 @@ class SpeakerNameChoiceTests(unittest.TestCase):
             ["Alex Yu", "Alexandra King", "Alexis Lee", "Alex Moreno"], "alex"
         )
         self.assertEqual(choices, ["Alex Moreno", "Alex Yu", "Alexandra King"])
+
+    def test_similar_names_include_expanded_first_names_and_reversed_order(self):
+        self.assertGreaterEqual(speaker_name_similarity("Alex Yu", "Alexander Yu"), 0.72)
+        self.assertEqual(speaker_name_similarity("Yu, Alex", "Alex Yu"), 1.0)
+        self.assertGreaterEqual(speaker_name_similarity("Bob Smith", "Robert Smith"), 0.72)
+        self.assertEqual(
+            similar_speaker_names("Alex Yu", ["Alexander Yu", "Blair Moore"]),
+            [("Alexander Yu", speaker_name_similarity("Alex Yu", "Alexander Yu"))],
+        )
 
 
 if __name__ == "__main__":

@@ -23,19 +23,21 @@ from .models_cache import MODEL_NAMES, cache_dir, download_model, model_availabl
 from .output import append_markdown_content
 from .settings import FilenameTemplateSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
-from .speaker_names import speaker_name_choices, speaker_name_suggestions
-from .outlook_calendar import today_meetings
+from .speaker_names import similar_speaker_names, speaker_name_choices, speaker_name_suggestions
+from .outlook_calendar import meetings_on, today_meetings
 from .version import __version__
 
 DEFAULT_RECORDINGS_FOLDER = Path(r"C:\Users\dariusk\OneDrive - stryten.com\Recordings")
+NO_MEETING_SELECTION = "No meeting selected - use current workflow"
 
 class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
         super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
+        self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_meetings = []
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_today_outlook_meetings)
     def _window_title(self, label):
-        return f"TranscriptForge v{__version__} — {label}"
+        return f"TranscriptForge v{__version__} - {label}"
     def _build(self):
         root = ttk.Frame(self, padding=12); root.pack(fill="both", expand=True); root.columnconfigure(1, weight=1)
         self._meeting_row(root, 0); self.input_entry = self._row(root, 1, "Input file", self.input_var, self._browse_input); self._folder_row(root, 2); self.filename_entry = self._row(root, 3, "Output filename", self.filename_var, None)
@@ -98,16 +100,54 @@ class App(tk.Tk):
     def _select_outlook_meeting(self, _event=None):
         selected = next((meeting for meeting in self.today_outlook_meetings if meeting.display == self.meeting_var.get()), None)
         if selected is None:
+            self.selected_outlook_meeting = None
+            return
+        try:
+            self._reconcile_outlook_names(selected, self)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror(self._window_title("Could not save speaker-name decision"), str(exc), parent=self)
             return
         self.selected_outlook_meeting = selected
-        self.expected_speakers_var.set(", ".join(selected.possible_speakers))
-        saved = self.meeting_output_settings.get(selected.subject)
-        filename_base = saved["filename_base"] if saved else selected.subject
+        self._apply_meeting_output(selected)
+        self._write_log(f"Selected Outlook meeting: {selected.subject}. Its invitees will be used for speaker matching.")
+
+    def _reconcile_outlook_names(self, meeting, parent):
+        store = SpeakerProfileStore()
+        preference_names = self._speaker_shortlist()
+        for outlook_name in meeting.possible_speakers:
+            candidates_by_key = {
+                name.casefold(): name
+                for name in (*store.profiles, *preference_names)
+            }
+            candidates = sorted(candidates_by_key.values(), key=str.casefold)
+            for profile_name, _score in similar_speaker_names(outlook_name, candidates):
+                if store.name_match_was_rejected(outlook_name, profile_name):
+                    continue
+                canonical_name = store.canonical_name(profile_name)
+                if canonical_name.casefold() == outlook_name.casefold():
+                    if canonical_name != outlook_name:
+                        store.confirm_name_alias(profile_name, outlook_name)
+                    break
+                same_person = messagebox.askyesno(
+                    self._window_title("Confirm speaker name"),
+                    f"Outlook lists '{outlook_name}', which is similar to the existing name '{profile_name}'. "
+                    f"Are these the same person?\n\n"
+                    f"Yes will merge any saved profile under '{outlook_name}' and use Outlook's spelling in future speaker lists. "
+                    "No will keep the names separate.",
+                    parent=parent,
+                )
+                if same_person:
+                    store.confirm_name_alias(profile_name, outlook_name)
+                    break
+                store.reject_name_match(outlook_name, profile_name)
+
+    def _apply_meeting_output(self, meeting):
+        saved = self.meeting_output_settings.get(meeting.subject)
+        filename_base = saved["filename_base"] if saved else meeting.subject
         if saved:
             self.folder_var.set(saved["output_folder"])
-        self.filename_var.set(f"{filename_base}-{self._meeting_date(selected):%Y%m%d}.md")
+        self.filename_var.set(f"{filename_base}-{self._meeting_date(meeting):%Y%m%d}.md")
         self.filename_templates.remember(filename_base)
-        self._write_log(f"Selected Outlook meeting: {selected.subject}. Possible speakers were added to Expected speakers.")
 
     def _accept_speaker_name_selection(self, event, combo, combos, names, recent_names):
         values = list(combo.cget("values"))
@@ -126,11 +166,20 @@ class App(tk.Tk):
     def _meeting_date(self, meeting):
         source = Path(self.input_var.get())
         if source.is_file():
-            return datetime.fromtimestamp(source.stat().st_mtime)
+            match = re.search(r"(?<!\d)(\d{8})[_-](\d{6})(?!\d)", source.stem)
+            if match:
+                try:
+                    return datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+                except ValueError:
+                    pass
+            try:
+                return datetime.fromtimestamp(source.stat().st_mtime)
+            except OSError:
+                return meeting.start
         return meeting.start
 
-    def _remember_selected_meeting_output(self):
-        meeting = self.selected_outlook_meeting
+    def _remember_selected_meeting_output(self, meeting=None):
+        meeting = meeting or self.selected_outlook_meeting
         folder = self.folder_var.get().strip()
         if meeting is None or not folder:
             return
@@ -294,10 +343,63 @@ class App(tk.Tk):
         ttk.Label(frame, text="A new recording was found by the scheduled scan.", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
         ttk.Label(frame, text=str(source), wraplength=620).pack(anchor="w", pady=(8, 12))
         ttk.Label(frame, text="Choose what to do with this recording. Ignore keeps the audio and removes it from the scan queue. You can restore it later from Setup > View history.", wraplength=620).pack(anchor="w")
+        ttk.Label(frame, text="Meeting (optional)").pack(anchor="w", pady=(12, 2))
+        meeting_var = tk.StringVar(value=NO_MEETING_SELECTION)
+        meeting_combo = ttk.Combobox(frame, textvariable=meeting_var, values=[NO_MEETING_SELECTION], state="readonly", width=72)
+        meeting_combo.pack(fill="x")
+        meeting_status = tk.StringVar(value="Loading Outlook meetings for this recording date...")
+        ttk.Label(frame, textvariable=meeting_status, wraplength=620).pack(anchor="w", pady=(2, 8))
+        ttk.Label(frame, text="Maximum expected speakers (soft limit, optional)").pack(anchor="w")
+        speaker_limit_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=speaker_limit_var, width=8).pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            frame,
+            text="Extra distinct voices stay available for review; the limit never merges or deletes them.",
+            wraplength=620,
+        ).pack(anchor="w", pady=(2, 0))
+        self._scheduled_meeting_dialog = dialog
+        self._scheduled_meeting_combo = meeting_combo
+        self._scheduled_meeting_var = meeting_var
+        self._scheduled_meeting_status = meeting_status
+        self._scheduled_meetings = []
+
+        def selected_meeting():
+            return next((meeting for meeting in self._scheduled_meetings if meeting.display == meeting_var.get()), None)
+
+        def update_limit(_event=None):
+            meeting = selected_meeting()
+            speaker_limit_var.set(str(len(meeting.possible_speakers)) if meeting and meeting.possible_speakers else "")
+
+        meeting_combo.bind("<<ComboboxSelected>>", update_limit)
+
         def close():
             dialog.grab_release(); dialog.destroy()
+            if self._scheduled_meeting_dialog is dialog:
+                self._scheduled_meeting_dialog = None
+                self._scheduled_meeting_combo = None
+                self._scheduled_meeting_var = None
+                self._scheduled_meeting_status = None
+                self._scheduled_meetings = []
+
         def transcribe():
-            close(); self._start()
+            meeting = selected_meeting()
+            try:
+                max_speakers = self._parse_speaker_limit(speaker_limit_var.get())
+            except ValueError as exc:
+                return messagebox.showerror(self._window_title("Invalid speaker limit"), str(exc), parent=dialog)
+            if meeting is not None:
+                try:
+                    self._reconcile_outlook_names(meeting, dialog)
+                except (OSError, ValueError, TypeError) as exc:
+                    return messagebox.showerror(self._window_title("Could not save speaker-name decision"), str(exc), parent=dialog)
+                self._apply_meeting_output(meeting)
+            close()
+            self._start(
+                meeting_override=meeting,
+                use_meeting_override=True,
+                max_speakers=max_speakers,
+            )
+
         def ignore():
             RecordingHistory().update(source, "ignored")
             self._write_log(f"Ignored recording: {source.name}")
@@ -318,6 +420,75 @@ class App(tk.Tk):
         ttk.Button(buttons, text="Delete", command=delete).pack(side="left")
         ttk.Button(buttons, text="Cancel", command=close).pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", close)
+        recording_time = self._recording_datetime(source)
+        self._load_scheduled_meetings(dialog, recording_time)
+
+    @staticmethod
+    def _recording_datetime(source: Path):
+        match = re.search(r"(?<!\d)(\d{8})[_-](\d{6})(?!\d)", source.stem)
+        if match:
+            try:
+                return datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+            except ValueError:
+                pass
+        try:
+            return datetime.fromtimestamp(source.stat().st_mtime)
+        except OSError:
+            return datetime.now()
+
+    @staticmethod
+    def _parse_speaker_limit(value):
+        clean = str(value).strip()
+        if not clean:
+            return None
+        if not clean.isdecimal() or int(clean) < 1:
+            raise ValueError("Enter a positive whole number, or leave the field empty for no limit.")
+        return int(clean)
+
+    def _load_scheduled_meetings(self, dialog, recording_time):
+        def work():
+            try:
+                meetings = meetings_on(recording_time)
+            except Exception as exc:
+                self.events.put(("scheduled_meeting_error", (dialog, str(exc))))
+            else:
+                self.events.put(("scheduled_meetings", (dialog, meetings)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _set_scheduled_meetings(self, dialog, meetings):
+        if dialog is not self._scheduled_meeting_dialog or self._scheduled_meeting_combo is None:
+            return
+        try:
+            if not dialog.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self._scheduled_meetings = meetings
+        values = [NO_MEETING_SELECTION, *(meeting.display for meeting in meetings)]
+        self._scheduled_meeting_combo.configure(values=values)
+        if self._scheduled_meeting_status is not None:
+            self._scheduled_meeting_status.set(
+                f"{len(meetings)} Outlook meeting(s) found for the recording date."
+                if meetings
+                else "No Outlook meetings found for the recording date. You can still transcribe without one."
+            )
+
+    def _set_scheduled_meeting_error(self, dialog, error):
+        if dialog is not self._scheduled_meeting_dialog or self._scheduled_meeting_combo is None:
+            return
+        try:
+            if not dialog.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self._scheduled_meetings = []
+        self._scheduled_meeting_combo.configure(values=[NO_MEETING_SELECTION])
+        if self._scheduled_meeting_status is not None:
+            self._scheduled_meeting_status.set(
+                f"Could not load Outlook meetings: {error}. You can still transcribe without one."
+            )
+        self._write_log(f"Could not read Outlook meetings for the recording date: {error}")
     def _ask_for_recording_folder(self, missing: Path):
         message = "TranscriptForge could not find the saved recording folder.\n\n"
         if missing:
@@ -340,24 +511,42 @@ class App(tk.Tk):
             return
         installed = model_available(self.model_var.get())
         self.download_button.configure(text="Model installed" if installed else "Download model", state="disabled" if installed else "normal")
-    def _start(self):
-        if self.outlook_loading:
+    def _start(self, *, meeting_override=None, use_meeting_override=False, max_speakers=None):
+        if self.outlook_loading and not use_meeting_override:
             return messagebox.showinfo(self._window_title("Outlook meetings still loading"), "Today's Outlook meetings are still loading. Please wait a moment, or use Refresh before starting transcription.", parent=self)
         if getattr(self, "awaiting_transcription", False):
             return self._confirm_transcription()
+        meeting = meeting_override if use_meeting_override else self.selected_outlook_meeting
+        expected_speakers = self._outlook_speaker_names(meeting) if meeting else self._speaker_shortlist() or None
+        if meeting and expected_speakers and max_speakers is None and not use_meeting_override:
+            max_speakers = len(expected_speakers)
         self._save_preferences()
         source = Path(self.input_var.get()); output = Path(self.folder_var.get()) / self.filename_var.get(); output = output.with_suffix(".md")
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS: return messagebox.showerror(self._window_title("Invalid input"), "Choose an existing supported audio or video file.")
         if output.resolve() == source.resolve(): return messagebox.showerror(self._window_title("Invalid output"), "The output must not overwrite the input.")
         if output.exists() and not messagebox.askyesno(self._window_title("Overwrite?"), f"Replace {output.name}?"): return
         if not model_available(self.model_var.get()): return messagebox.showerror(self._window_title("Model unavailable"), "Download the selected model before transcribing.")
-        self._remember_selected_meeting_output()
+        if meeting is not None:
+            self._remember_selected_meeting_output(meeting)
         rename_target = source.with_name(output.stem + source.suffix)
         self.rename_overwrite = False
         if self.rename_source.get() and rename_target.resolve() != source.resolve() and rename_target.exists():
             if not messagebox.askyesno(self._window_title("Replace existing media?"), f"Replace the existing media file?\n\n{rename_target}"): return
             self.rename_overwrite = True
-        self.active_source = source; self.active_output = output; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), self.identify_speakers.get(), self.rename_source.get(), self.rename_overwrite, self._speaker_shortlist())
+        identify_speakers = self.identify_speakers.get() or meeting is not None or max_speakers is not None
+        if identify_speakers and not self.identify_speakers.get():
+            self._write_log("Speaker identification is enabled for this recording because a meeting or speaker limit was selected.")
+        self.active_source = source; self.active_output = output; self.active_meeting = meeting; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), identify_speakers, self.rename_source.get(), self.rename_overwrite, expected_speakers, max_speakers, meeting is not None)
+
+    @staticmethod
+    def _outlook_speaker_names(meeting):
+        store = SpeakerProfileStore()
+        names = {}
+        for name in meeting.possible_speakers:
+            if name.strip():
+                canonical = store.canonical_name(name)
+                names.setdefault(canonical.casefold(), canonical)
+        return sorted(names.values(), key=str.casefold)
     def _confirm_transcription(self):
         source = Path(self.input_var.get()); output = (Path(self.folder_var.get()) / self.filename_var.get()).with_suffix(".md")
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -366,7 +555,9 @@ class App(tk.Tk):
             return messagebox.showerror(self._window_title("Invalid output"), "The output must not overwrite the input.")
         if output.exists() and not messagebox.askyesno(self._window_title("Overwrite?"), f"Replace {output.name}?"):
             return
-        self._remember_selected_meeting_output()
+        meeting = getattr(self, "active_meeting", None)
+        if meeting is not None:
+            self._remember_selected_meeting_output(meeting)
         rename_overwrite = False; rename_target = source.with_name(output.stem + source.suffix)
         if self.rename_source.get() and rename_target.resolve() != source.resolve() and rename_target.exists():
             if not messagebox.askyesno(self._window_title("Replace existing media?"), f"Replace the existing media file?\n\n{rename_target}"):
@@ -495,11 +686,17 @@ class App(tk.Tk):
             "Listen to each voice sample and confirm or edit the suggested name. "
             "Uncheck Learn when a labeled cluster should not train future recognition.",
         )
+        overflow_count = sum(cluster.over_limit for cluster in clusters)
+        if overflow_count and analysis.speaker_limit is not None:
+            instructions += (
+                f" {overflow_count} additional distinct voice group(s) exceed the soft limit of "
+                f"{analysis.speaker_limit}; they are kept below for review, not merged or discarded."
+            )
         ttk.Label(frame, text=instructions, wraplength=720).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             frame,
             text="Type to filter names; use the arrow keys and Enter to select. "
-            "Names selected in this review move to the top.",
+            "Invitees are suggested first; type a guest name for a voice not on the list. Names selected in this review move to the top.",
         ).pack(anchor="w", pady=(0, 10))
 
         name_vars = {}
@@ -508,7 +705,19 @@ class App(tk.Tk):
         recent_names = self._recent_speaker_names
         existing_names = sorted(set(payload.get("existing_names", [])), key=str.casefold)
         choices = speaker_name_choices(existing_names)
-        for cluster in clusters:
+        ordered_clusters = (
+            [cluster for cluster in clusters if not cluster.over_limit]
+            + [cluster for cluster in clusters if cluster.over_limit]
+        )
+        overflow_heading_shown = False
+        for cluster in ordered_clusters:
+            if cluster.over_limit and not overflow_heading_shown:
+                ttk.Separator(frame).pack(fill="x", pady=(8, 3))
+                ttk.Label(
+                    frame,
+                    text="Additional distinct voices beyond the soft limit",
+                ).pack(anchor="w", pady=(0, 3))
+                overflow_heading_shown = True
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=5)
             ttk.Label(row, text=cluster.identifier, width=14).pack(side="left")
@@ -588,7 +797,9 @@ class App(tk.Tk):
         def remove_selected():
             selection = listing.curselection()
             if not selection: return
-            name = sorted(store.profiles)[selection[0]]; del store.profiles[name]; store.save(); listing.delete(selection[0])
+            name = sorted(store.profiles)[selection[0]]
+            store.delete_profile(name)
+            listing.delete(selection[0])
         controls = ttk.Frame(frame); controls.pack(fill="x"); ttk.Button(controls, text="Delete selected", command=remove_selected).pack(side="left"); ttk.Button(controls, text="Close", command=lambda: (dialog.grab_release(), dialog.destroy())).pack(side="right")
     def _poll(self):
         try:
@@ -600,6 +811,8 @@ class App(tk.Tk):
                 elif kind == "model_ready": self._update_model_button()
                 elif kind == "outlook_meetings": self._set_today_outlook_meetings(value)
                 elif kind == "outlook_error": self.outlook_loading = False; self.outlook_ready = True; self.meeting_combo.configure(values=(), state="disabled"); self.refresh_meetings_button.configure(state="normal"); self.meeting_var.set("Outlook calendar unavailable"); self._write_log(f"Could not read today's Outlook meetings: {value}")
+                elif kind == "scheduled_meetings": self._set_scheduled_meetings(*value)
+                elif kind == "scheduled_meeting_error": self._set_scheduled_meeting_error(*value)
                 elif kind == "speaker_review": self._show_speaker_review(value)
                 elif kind == "ready": self.awaiting_transcription = True; self._set_job_fields_enabled(True, include_input=False); self.transcribe_button.configure(state="normal", text="Start transcription"); self.status_var.set(str(value)); self._write_log(str(value))
                 elif kind == "done": self.status_var.set("Completed"); self._write_log(f"Wrote {value}"); self._remember_output_location(Path(value).parent); self._record_history("completed", Path(value)); self._complete(); self.append_button.configure(state="normal"); self._open_output(value) if self.open_after.get() else None
@@ -626,7 +839,7 @@ class App(tk.Tk):
             except OSError as exc:
                 self._write_log(f"Could not update recording history: {exc}")
     def _new_transcription(self):
-        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.meeting_var.set("Select a meeting (optional)" if self.today_outlook_meetings else "No Outlook meetings today"); self.selected_outlook_meeting = None; self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
+        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.meeting_var.set("Select a meeting (optional)" if self.today_outlook_meetings else "No Outlook meetings today"); self.selected_outlook_meeting = None; self.active_meeting = None; self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
     def _append_content(self):
         path = getattr(self, "active_output", None)
         if not path or not Path(path).is_file():

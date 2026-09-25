@@ -8,7 +8,7 @@ Improve TranscriptForge so a meeting with a small number of known speakers produ
 
 ## Implementation status
 
-TranscriptForge v0.20.0 implements the core protection and recognition improvements in this plan:
+TranscriptForge v0.25.0 implements the core protection and recognition improvements in this plan:
 
 - schema-3 archive/active profile storage with automatic version-2 backup on save;
 - unlimited reviewed-sample archive with quality, diversity, and per-recording active-set limits;
@@ -17,12 +17,24 @@ TranscriptForge v0.20.0 implements the core protection and recognition improveme
 - enrollment of only the representative clips the user heard and kept;
 - same-source exclusion during reruns and recoverable source quarantine with a timestamped backup;
 - optional expected-speaker filtering in the GUI and CLI;
+- scheduled-recording meeting selection using appointments from the recording date;
+- meeting-specific invitee shortlists that do not overwrite general speaker preferences;
+- fuzzy name reconciliation with confirmed profile merging and remembered rejections;
+- editable soft speaker limits that prioritize likely groups but keep overflow available for review;
 - per-cluster learning opt-out during speaker review;
 - read-only `diagnose` CLI reporting;
 - profile-management counts showing archived versus active samples;
 - portable configuration transfer of the profile archive and preferences.
 
 The remaining follow-up work is formal held-out evaluation and finer overlap detection. The implementation should continue through those items before being treated as fully validated for all meeting types.
+
+## Meeting invite and name reconciliation
+
+The scheduled-recording prompt has an explicit no-meeting choice that leaves the existing preferences in control. When a meeting is selected, the default Outlook Classic calendar is queried for the recording date, using a timestamp in the filename when available and the file modified time otherwise. Organizer and invitee names are passed to speaker analysis for that job only, and speaker identification is enabled for the selected meeting.
+
+Matching is restricted to saved profiles for invitees, while acoustic-only groups remain available for people without profiles or guests. The first review suggests invitee names; users can still type another name or choose Unknown. A similar spelling found in saved profiles or the Expected speakers preference triggers a confirmation. A confirmed match merges archived embeddings under the exact Outlook spelling and saves an alias so older preference spellings resolve to the Outlook name in future matching. A declined match is remembered locally to avoid repeatedly asking about that same pair. Both decisions travel with the portable speaker-profile configuration.
+
+The invite count proposes an editable soft speaker limit in the scheduled-recording prompt. Confident profile matches are prioritized, then longer and higher-quality voice groups. Groups beyond the limit are still displayed in a separate review section and retain their samples. The limit never forces distinct voices into a single cluster or drops them. It is a visual and review-priority aid, not a claim that the number of invitees equals the number of people who actually spoke.
 
 ## Evidence from the September 4 regression
 

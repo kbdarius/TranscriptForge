@@ -1,4 +1,4 @@
-"""Read the current day's Outlook Classic appointments without Graph access."""
+"""Read Outlook Classic appointments without Graph access."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class OutlookMeeting:
 
     @property
     def display(self) -> str:
-        return f"{self.start.strftime('%I:%M %p').lstrip('0')} — {self.subject}"
+        return f"{self.start.strftime('%I:%M %p').lstrip('0')} - {self.subject}"
 
     @property
     def possible_speakers(self) -> list[str]:
@@ -30,7 +30,7 @@ class OutlookMeeting:
         return values
 
 
-def _read_today_with_outlook(day: datetime) -> list[dict]:
+def _read_day_with_outlook(day: datetime) -> list[dict]:
     """Use the installed Outlook Classic COM interface in the calling thread."""
     try:
         import pythoncom
@@ -70,10 +70,9 @@ def _read_today_with_outlook(day: datetime) -> list[dict]:
         pythoncom.CoUninitialize()
 
 
-def today_meetings(today: datetime | None = None, reader=None) -> list[OutlookMeeting]:
-    """Return the default Outlook Classic calendar's appointments for one day."""
-    day = today or datetime.now()
-    payload = (reader or _read_today_with_outlook)(day)
+def meetings_on(day: datetime, reader=None) -> list[OutlookMeeting]:
+    """Return the default Outlook Classic calendar's appointments for the given day."""
+    payload = (reader or _read_day_with_outlook)(day)
     meetings: list[OutlookMeeting] = []
     for item in payload:
         if not isinstance(item, dict) or not isinstance(item.get("subject"), str):
@@ -93,3 +92,8 @@ def today_meetings(today: datetime | None = None, reader=None) -> list[OutlookMe
             attendees=tuple(" ".join(str(name).split()) for name in attendees if str(name).strip()),
         ))
     return sorted(meetings, key=lambda meeting: meeting.start)
+
+
+def today_meetings(today: datetime | None = None, reader=None) -> list[OutlookMeeting]:
+    """Return today's appointments, or appointments for the supplied date."""
+    return meetings_on(today or datetime.now(), reader)

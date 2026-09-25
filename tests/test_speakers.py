@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from transcriptforge.models import Segment
-from transcriptforge.speakers import SpeakerAnalysis, SpeakerCluster, SpeakerProfileStore, _cluster_observations, apply_speaker_names, cosine_similarity, fill_unknown_speakers_from_neighbors, refine_unresolved_clusters, remove_review_sample
+from transcriptforge.speakers import SpeakerAnalysis, SpeakerCluster, SpeakerProfileStore, _cluster_observations, _mark_speaker_overflow, apply_speaker_names, cosine_similarity, fill_unknown_speakers_from_neighbors, refine_unresolved_clusters, remove_review_sample
 
 
 class SpeakerTests(unittest.TestCase):
@@ -70,6 +70,78 @@ class SpeakerTests(unittest.TestCase):
             store.add_confirmed_embedding("Alex", [1.0, 0.0]); store.add_confirmed_embedding("Blair", [0.99, 0.1])
             name, score, margin = store.best_match_with_margin([1.0, 0.05], threshold=0.0)
             self.assertIsNotNone(name); self.assertIsNotNone(score); self.assertLess(margin, 0.04)
+
+    def test_confirmed_outlook_name_merges_profile_and_persists_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            store = SpeakerProfileStore(path)
+            store.add_confirmed_embedding("Alexander Yu", [1.0, 0.0])
+            store.add_confirmed_embedding("Alex Yu", [0.0, 1.0])
+            store.confirm_name_alias("Alexander Yu", "Alex Yu")
+
+            loaded = SpeakerProfileStore(path)
+            self.assertEqual(set(loaded.profiles), {"Alex Yu"})
+            self.assertEqual(len(loaded.profiles["Alex Yu"]), 2)
+            self.assertEqual(loaded.canonical_name("Alexander Yu"), "Alex Yu")
+            self.assertEqual(loaded.match_candidates([1.0, 0.0], allowed_names=["Alexander Yu"])[0][0], "Alex Yu")
+
+    def test_rejected_name_match_is_remembered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            store = SpeakerProfileStore(path)
+            store.reject_name_match("Alex Yu", "Alexander Yu")
+            loaded = SpeakerProfileStore(path)
+            self.assertTrue(loaded.name_match_was_rejected("Alexander Yu", "Alex Yu"))
+
+    def test_case_only_name_confirmation_uses_outlook_casing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            store = SpeakerProfileStore(path)
+            store.add_confirmed_embedding("Alex Yu", [1.0, 0.0])
+            store.confirm_name_alias("Alex Yu", "alex yu")
+            loaded = SpeakerProfileStore(path)
+            self.assertEqual(set(loaded.profiles), {"alex yu"})
+            self.assertEqual(loaded.canonical_name("Alex Yu"), "alex yu")
+            self.assertEqual(loaded.canonical_name("ALEX YU"), "alex yu")
+
+    def test_deleting_profile_removes_its_saved_name_decisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            store = SpeakerProfileStore(path)
+            store.add_confirmed_embedding("Alexander Yu", [1.0, 0.0])
+            store.confirm_name_alias("Alexander Yu", "Alex Yu")
+            store.reject_name_match("Alex Yu", "Alexandra Yu")
+            self.assertTrue(store.delete_profile("Alex Yu"))
+
+            loaded = SpeakerProfileStore(path)
+            self.assertEqual(loaded.profiles, {})
+            self.assertEqual(loaded.name_aliases, {})
+            self.assertEqual(loaded.rejected_name_matches, set())
+
+    def test_empty_expected_speaker_list_restricts_profile_matching_to_none(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SpeakerProfileStore(Path(directory) / "profiles.json")
+            store.add_confirmed_embedding("Alex", [1.0, 0.0])
+            self.assertIsNone(store.best_match([1.0, 0.0], allowed_names=[])[0])
+
+    def test_speaker_limit_marks_overflow_without_removing_clusters(self):
+        known = SpeakerCluster(
+            "SPEAKER_01", [1.0, 0.0], [(0.0, 2.0)], [(0.0, 2.0)],
+            suggested_name="Alex", training_qualities=[0.8],
+        )
+        guest = SpeakerCluster(
+            "SPEAKER_02", [0.0, 1.0], [(3.0, 13.0)], [(3.0, 6.0)],
+            training_qualities=[0.9],
+        )
+        clusters = [guest, known]
+        _mark_speaker_overflow(clusters, 1)
+        self.assertEqual(len(clusters), 2)
+        self.assertFalse(known.over_limit)
+        self.assertTrue(guest.over_limit)
+
+    def test_speaker_limit_requires_a_positive_integer(self):
+        with self.assertRaises(ValueError):
+            _mark_speaker_overflow([], 0)
 
     def test_matching_uses_robust_profile_score_instead_of_one_outlier(self):
         with tempfile.TemporaryDirectory() as directory:
