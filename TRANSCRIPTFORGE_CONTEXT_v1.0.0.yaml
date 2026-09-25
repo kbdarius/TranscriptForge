@@ -1,0 +1,605 @@
+metadata:
+  project: "TranscriptForge"
+  project_description: "Local-first Windows desktop and CLI application for audio/video transcription with optional speaker identification."
+  project_type: "mixed"
+  project_subtype: "Windows desktop application with local speech processing and project documentation"
+  classification_confidence: "high"
+  classification_evidence:
+    - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
+    - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
+  version: "1.0.0"
+  status: "current"
+  created_date: "2026-09-25"
+  last_updated: "2026-09-25"
+  target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+  source_snapshot:
+    type: "git_commit"
+    value: "c4d00a6bb58a5570cd653a36accabb1f93d13182"
+  coverage_limits:
+    - "The source snapshot is commit c4d00a6. This context file and the related AGENTS.md update were created after that snapshot."
+    - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
+    - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
+    - "Outlook and full GUI runtime behavior were not exercised during this context-file creation; related claims are based on source, tests, and project documentation."
+
+scope:
+  purpose:
+    - "Provide a compact, source-grounded navigation map for future development and maintenance work."
+    - "Identify authoritative implementation, documentation, workflows, local data boundaries, and known limitations."
+  in_scope:
+    - "Tracked application source, tests, setup and scheduling scripts, and project documentation."
+    - "Current user-facing transcription, meeting-aware speaker review, configuration, and scheduled-scan workflows."
+  out_of_scope:
+    - "The contents of user recordings, transcripts, voice profiles, model files, temporary audio, or private configuration packages."
+    - "Live Outlook calendar contents and machine-specific local settings."
+    - "Unreviewed untracked image contents and external systems not represented by repository evidence."
+
+project_overview:
+  purpose: "Transcribe local audio and video recordings into timestamped Markdown files, with optional local speaker recognition and human review."
+  audience_or_stakeholders:
+    - "Windows users who transcribe local recordings, including meeting recordings."
+    - "Project maintainers who develop, test, install, or support the application."
+  primary_outputs:
+    - "A Markdown transcript with source, model, language, duration, and timestamped transcript segments."
+    - "Optional speaker-review JSON for the CLI human-review handoff."
+    - "Optional local speaker-profile and settings data."
+
+project_components:
+  - name: "Desktop GUI"
+    path: "transcriptforge/app.py"
+    purpose: "Provides the Tkinter transcription, setup, speaker-review, Outlook meeting, history, and profile-management workflows."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/app.py"
+      - "transcriptforge/controller.py"
+    supporting_sources:
+      - "README.md"
+      - "tests/test_app_meeting.py"
+    dependencies:
+      - "TranscriptionController"
+      - "Local settings and speaker-profile stores"
+      - "Optional Outlook Classic calendar integration"
+    constraints:
+      - "The application is Windows-first and uses the standard-library Tkinter UI."
+      - "The window title reads its version from transcriptforge/version.py."
+
+  - name: "Transcription controller and media pipeline"
+    path: "transcriptforge/controller.py"
+    purpose: "Coordinates media decoding, local speaker analysis and review, Whisper transcription, output writing, cancellation, and progress events."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/controller.py"
+      - "transcriptforge/media.py"
+      - "transcriptforge/audio.py"
+      - "transcriptforge/transcription.py"
+      - "transcriptforge/quality.py"
+      - "transcriptforge/output.py"
+    supporting_sources:
+      - "tests/test_transcription.py"
+      - "tests/test_output.py"
+      - "DOC/INSTALLATION.md"
+    dependencies:
+      - "imageio-ffmpeg"
+      - "openai-whisper"
+      - "NumPy"
+    constraints:
+      - "Media decoding and transcription run locally after the required packages and models are installed."
+      - "Temporary decoded audio is managed in temporary working directories."
+
+  - name: "Speaker recognition and meeting context"
+    path: "transcriptforge/speakers.py"
+    purpose: "Creates voice embeddings and clusters, matches reviewed voices to local profiles, applies roster filtering, and supports confirmed name reconciliation."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/speakers.py"
+      - "transcriptforge/speaker_names.py"
+      - "transcriptforge/outlook_calendar.py"
+      - "transcriptforge/controller.py"
+    supporting_sources:
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      - "tests/test_speakers.py"
+      - "tests/test_speaker_names.py"
+      - "tests/test_outlook_calendar.py"
+    dependencies:
+      - "Resemblyzer"
+      - "Optional Outlook Classic COM access through pywin32"
+    constraints:
+      - "Speaker profiles contain sensitive voice embeddings and names."
+      - "Meeting invitee names narrow profile matching but do not identify an unprofiled voice by themselves."
+
+  - name: "CLI and scheduled recording scan"
+    path: "transcriptforge/cli.py"
+    purpose: "Provides command-line transcription, model/profile/configuration commands, JSON event output, speaker-review handoffs, and scheduled folder scanning."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/cli.py"
+      - "transcriptforge/__main__.py"
+      - "transcriptforge/scheduler.py"
+      - "Install_TranscriptForgeTask.ps1"
+      - "Remove_TranscriptForgeTask.ps1"
+    supporting_sources:
+      - "README.md"
+      - "tests/test_cli.py"
+    dependencies:
+      - "Python Launcher on Windows"
+      - "Windows Task Scheduler for the optional recurring scan"
+    constraints:
+      - "Scheduled scans use the local recording folder and local recording history."
+      - "The scan presents a user choice before transcription, ignoring, or deleting a recording."
+
+  - name: "Local settings and portable configuration"
+    path: "transcriptforge/settings.py"
+    purpose: "Persists application preferences and histories locally and imports or exports portable configuration packages."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/settings.py"
+      - "transcriptforge/configuration.py"
+    supporting_sources:
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - "tests/test_settings.py"
+      - "tests/test_configuration.py"
+    dependencies:
+      - "Windows LOCALAPPDATA when available"
+      - "JSON settings stores and ZIP-based .tfconfig packages"
+    constraints:
+      - "Configuration packages can contain biometric speaker embeddings and must be handled as sensitive data."
+      - "Machine-specific recording and output paths, histories, models, audio, and transcripts are excluded from portable configuration packages."
+
+  - name: "Documentation and verification"
+    path: "DOC/"
+    purpose: "Explains user workflows, installation, current speaker-recognition behavior, proposed feasibility work, and project history."
+    critical: false
+    authoritative_sources:
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      - "AGENTS.md"
+    supporting_sources:
+      - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md"
+      - "DOC/Audio_Transcriber_Project_Proposal.md"
+      - "tests/"
+    dependencies:
+      - "Implementation and tests for current behavior"
+    constraints:
+      - "The feasibility plan is prospective; do not treat its proposed work as implemented."
+
+system_or_information_flow:
+  overview: "The user selects local media and options. TranscriptForge decodes audio locally, optionally analyzes and reviews speakers, transcribes with a cached local Whisper model, and writes Markdown output."
+  inputs:
+    - "Supported local WAV, MP3, M4A, AAC, MP4, MOV, or MKV media."
+    - "User-selected model, language, output options, and optional speaker preferences."
+    - "Optional appointments and invitees read from the local Outlook Classic default calendar."
+  processing_or_workflow:
+    - "transcriptforge/media.py invokes the FFmpeg executable supplied by imageio-ffmpeg to create temporary mono 16 kHz PCM audio."
+    - "transcriptforge/audio.py reads samples for local speech and speaker processing."
+    - "transcriptforge/speakers.py optionally analyzes voice intervals and uses reviewed identities and local profiles."
+    - "transcriptforge/transcription.py sends audio samples to the cached local Whisper model and retries suspect ranges."
+    - "transcriptforge/output.py renders and atomically writes the Markdown transcript."
+  outputs:
+    - "A timestamped Markdown transcript in the selected output location."
+    - "Optional speaker-review JSON and temporary review clips when human review is needed."
+    - "Local JSON settings, history, rejection records, and speaker profiles."
+
+file_structure:
+  key_paths:
+    - path: "AGENTS.md"
+      purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+      purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
+    - path: "README.md"
+      purpose: "Current user-facing overview, usage, speaker workflow, CLI examples, and local-data behavior."
+    - path: "requirements.txt"
+      purpose: "Direct Python runtime dependency declarations."
+    - path: "Setup_TranscriptForge.bat"
+      purpose: "Windows setup, dependency checks, and model initialization."
+    - path: "Run_TranscriptForge.bat"
+      purpose: "Windows launcher for the desktop application."
+    - path: "transcriptforge/"
+      purpose: "Application package containing the GUI, CLI, processing pipeline, settings, and speaker logic."
+    - path: "tests/"
+      purpose: "Standard-library unittest coverage for CLI, settings, output, transcription, speaker, and meeting behavior."
+    - path: "DOC/README.md"
+      purpose: "Index of project documentation."
+    - path: "DOC/INSTALLATION.md"
+      purpose: "Windows setup, dependency, model, local-storage, and troubleshooting guidance."
+    - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      purpose: "Current speaker-recognition implementation, evidence, safeguards, and known limitations."
+    - path: "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md"
+      purpose: "Candidate future work and evaluation criteria; not a statement of implemented behavior."
+    - path: "DOC/Audio_Transcriber_Project_Proposal.md"
+      purpose: "Earlier product and implementation proposal; consult for background, then verify against current code."
+
+source_of_truth:
+  precedence_rule: "Use current source and tests to determine implemented behavior. Use transcriptforge/version.py for the application version, AGENTS.md for contributor requirements, and current user documentation for supported workflows. Treat proposals and feasibility plans as non-authoritative for current implementation."
+  authoritative:
+    - path: "transcriptforge/"
+      supports: "Current application, CLI, processing, settings, speaker, Outlook, and scheduling behavior."
+    - path: "tests/"
+      supports: "Automated behavior exercised by the unit test suite."
+    - path: "transcriptforge/version.py"
+      supports: "Single source of truth for the application version."
+    - path: "requirements.txt"
+      supports: "Direct Python runtime dependencies."
+    - path: "AGENTS.md"
+      supports: "Repository-specific development and verification requirements."
+    - path: "README.md"
+      supports: "Current user-facing behavior and examples, verified against source when precision matters."
+    - path: "DOC/INSTALLATION.md"
+      supports: "Supported Windows setup, dependency, model, and troubleshooting workflow."
+    - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      supports: "Speaker-recognition status and documented limitations, checked against source and tests."
+  derived:
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+      derived_from:
+        - "AGENTS.md"
+        - "README.md"
+        - "requirements.txt"
+        - "transcriptforge/"
+        - "tests/"
+        - "DOC/"
+  historical_or_archived:
+    - "DOC/Audio_Transcriber_Project_Proposal.md: earlier implementation proposal; current code may differ."
+    - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md: proposed work and acceptance criteria, not implemented behavior."
+
+workflows:
+  - name: "Manual GUI transcription"
+    trigger: "The user launches the application directly."
+    inputs:
+      - "A supported local media file."
+      - "A cached Whisper model and optional user settings."
+    steps:
+      - "Launch with Run_TranscriptForge.bat or py -3 -m transcriptforge."
+      - "Select the media, output location, model, and optional speaker settings."
+      - "If speaker identification is enabled, review suggested and unresolved voices before Whisper transcription."
+      - "Transcribe locally and save the rendered Markdown output."
+    outputs:
+      - "A Markdown transcript and updated local histories or profiles as applicable."
+    failure_handling:
+      - "Whisper transcription requires an already cached model; use the GUI Download model action or the CLI model download command."
+      - "Use Setup_TranscriptForge.bat to install or verify required packages and model files."
+
+  - name: "CLI transcription and speaker review"
+    trigger: "A user or automation invokes transcriptforge.cli."
+    inputs:
+      - "A supported media path and CLI options."
+      - "Optional speaker-review JSON from an earlier run."
+    steps:
+      - "Run py -3 -m transcriptforge.cli transcribe with the requested options."
+      - "With --speakers, the command can return exit code 2 and write a speaker-review JSON file before transcription."
+      - "Edit review names and rerun with --speaker-review; unresolved voices can require another review pass."
+      - "Use --accept-suggestions only when bypassing the human review checkpoint is intentional."
+    outputs:
+      - "A Markdown transcript, JSON events when requested, or a speaker-review JSON handoff."
+    failure_handling:
+      - "Invalid or unsupported input, existing output without --force, and uncached models are reported as errors."
+
+  - name: "Scheduled recording scan"
+    trigger: "The optional Windows Scheduled Task runs at its configured interval."
+    inputs:
+      - "A user-configured local recording folder."
+      - "Local recording history and supported media files."
+    steps:
+      - "Install or remove the task with Install_TranscriptForgeTask.ps1 or Remove_TranscriptForgeTask.ps1."
+      - "transcriptforge/scheduler.py selects an eligible recording older than its minimum age and launches the GUI."
+      - "The user can transcribe, ignore, or delete the selected recording; history supports later requeue of ignored or pending recordings."
+    outputs:
+      - "A GUI transcription job and an updated local recording-history ledger."
+    failure_handling:
+      - "The setup script reports missing Python or task-registration errors."
+      - "Deleting a recording is a user-confirmed file operation and cannot be undone by TranscriptForge."
+
+  - name: "Meeting-aware speaker review"
+    trigger: "The user selects an Outlook meeting in the main window or scheduled-recording prompt."
+    inputs:
+      - "The recording date from a supported filename timestamp when available, otherwise the file modified time."
+      - "Organizer and attendee names from the selected local Outlook Classic appointment."
+      - "Existing local speaker profiles."
+    steps:
+      - "Leave the explicit no-meeting option selected to preserve the current preference-driven workflow."
+      - "When a meeting is selected, use its roster to shortlist saved profiles for that recording."
+      - "Ask for confirmation when an Outlook spelling resembles a saved profile or expected-speaker name; confirmed aliases use Outlook spelling."
+      - "Apply the attendee count only as a soft review limit; keep extra distinct voice groups available for review."
+    outputs:
+      - "Meeting-specific speaker suggestions and user-confirmed profile/name decisions."
+    failure_handling:
+      - "Unmatched guests and uncertain acoustic groups remain reviewable rather than being forced to a roster name."
+      - "Outlook integration is optional and depends on Outlook Classic and pywin32 on the local PC."
+
+  - name: "Portable configuration transfer"
+    trigger: "The user selects Export configuration or Import configuration."
+    inputs:
+      - "Preferences, filename templates, local profile data, and removed-sample decisions."
+      - "An optional .tfconfig package."
+    steps:
+      - "Export or import through transcriptforge/configuration.py."
+      - "Merge imported speaker profile data with destination profiles."
+    outputs:
+      - "A ZIP-based .tfconfig package or updated local JSON settings and profiles."
+    failure_handling:
+      - "Only supported package format/version data is accepted."
+      - "Treat packages as sensitive because they may contain biometric embeddings and names."
+
+external_dependencies:
+  - name: "Python"
+    type: "other"
+    purpose: "Runs the application, CLI, setup checks, and unittest suite; installation guide specifies Python 3.11 or newer."
+    evidence: "DOC/INSTALLATION.md"
+  - name: "openai-whisper and PyTorch"
+    type: "library"
+    purpose: "Local speech-to-text inference with cached Whisper models."
+    evidence: "requirements.txt"
+  - name: "NumPy"
+    type: "library"
+    purpose: "Audio sample arrays and numerical processing."
+    evidence: "requirements.txt"
+  - name: "imageio-ffmpeg"
+    type: "library"
+    purpose: "Provides the FFmpeg executable used to decode supported local media."
+    evidence: "requirements.txt"
+  - name: "Resemblyzer"
+    type: "library"
+    purpose: "Produces local voice embeddings for optional speaker analysis."
+    evidence: "requirements.txt"
+  - name: "pywin32"
+    type: "library"
+    purpose: "Enables optional local Outlook Classic COM calendar access."
+    evidence: "requirements.txt"
+  - name: "Outlook Classic"
+    type: "vendor"
+    purpose: "Provides appointments from the local default calendar; the integration does not use Microsoft Graph."
+    evidence: "transcriptforge/outlook_calendar.py"
+  - name: "Windows Task Scheduler and PowerShell"
+    type: "other"
+    purpose: "Support the optional recurring scan of a local recording folder."
+    evidence: "Install_TranscriptForgeTask.ps1"
+  - name: "Internet access during setup"
+    type: "service"
+    purpose: "May be needed to install Python packages and download Whisper or speaker-encoder model files; normal transcription runs locally."
+    evidence: "DOC/INSTALLATION.md"
+
+constraints_and_known_issues:
+  - description: "Whisper transcription uses a model already present in the local cache; model download is a separate action."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/models_cache.py"
+      - "transcriptforge/app.py"
+      - "transcriptforge/cli.py"
+    workaround: "Download the selected model with the GUI or CLI before transcribing."
+    evidence:
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+  - description: "Outlook meeting lookup uses the installed Outlook Classic COM interface and the default local calendar; it is not an Outlook web or Microsoft Graph integration."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/outlook_calendar.py"
+    workaround: "Use the no-meeting option or existing speaker preferences when local Outlook Classic is unavailable."
+    evidence:
+      - "transcriptforge/outlook_calendar.py"
+      - "tests/test_outlook_calendar.py"
+      - "README.md"
+  - description: "Invitee names narrow matches to known profiles but do not provide voice identity for a person without a saved, user-confirmed profile."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/speakers.py"
+      - "transcriptforge/controller.py"
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+    workaround: "Keep unmatched guests and uncertain clusters available for user review."
+    evidence:
+      - "README.md"
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+  - description: "The meeting invitee count is a soft review priority. It does not merge or discard distinct voice groups."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/speakers.py"
+      - "transcriptforge/controller.py"
+    workaround: "Review extra groups in the additional-voices section."
+    evidence:
+      - "README.md"
+      - "tests/test_app_meeting.py"
+      - "tests/test_speakers.py"
+  - description: "Formal held-out evaluation and finer overlap detection remain follow-up work; speaker-recognition quality is not claimed to be fully validated for all meeting types."
+    status: "planned"
+    affected_areas:
+      - "transcriptforge/speakers.py"
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md"
+    workaround: "Keep uncertain results reviewable and evaluate recognition on held-out recordings before claiming broader accuracy."
+    evidence:
+      - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md"
+  - description: "Speaker profiles and portable configuration packages can contain sensitive biometric voice embeddings and names."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/speakers.py"
+      - "transcriptforge/configuration.py"
+      - "transcriptforge/settings.py"
+    workaround: "Keep profiles and .tfconfig packages local or transfer them only through an approved private channel; do not commit generated profile data."
+    evidence:
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - ".gitignore"
+  - description: "The default recording-folder path in the GUI is machine-specific and may not exist on another PC."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/settings.py"
+    workaround: "Choose a valid local recording folder in the GUI; saved folder settings are per PC."
+    evidence:
+      - "README.md"
+      - "transcriptforge/app.py"
+      - "transcriptforge/settings.py"
+
+recent_changes_summary:
+  - date: "2026-09-25"
+    description: "Added meeting-aware speaker selection, roster-filtered profile suggestions, confirmed name aliases, soft speaker-limit overflow review, and related tests and documentation."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/outlook_calendar.py"
+      - "transcriptforge/speaker_names.py"
+      - "transcriptforge/speakers.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "Git commit c4d00a6bb58a5570cd653a36accabb1f93d13182; application version 0.25.0."
+
+ai_navigation:
+  bootstrap_sequence:
+    - step: 1
+      action: "Read repository-specific instructions before making changes."
+      sources:
+        - "AGENTS.md"
+    - step: 2
+      action: "Use this context file to route the task to relevant sources."
+      sources:
+        - "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+    - step: 3
+      action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
+      sources:
+        - "transcriptforge/"
+        - "tests/"
+        - "README.md"
+  task_routing:
+    - task: "Application startup, GUI controls, and meeting selection"
+      start_with:
+        - "transcriptforge/app.py"
+        - "transcriptforge/controller.py"
+      then_check:
+        - "transcriptforge/outlook_calendar.py"
+        - "tests/test_app_meeting.py"
+        - "README.md"
+    - task: "Media decoding, Whisper transcription, and Markdown output"
+      start_with:
+        - "transcriptforge/media.py"
+        - "transcriptforge/audio.py"
+        - "transcriptforge/transcription.py"
+      then_check:
+        - "transcriptforge/quality.py"
+        - "transcriptforge/models_cache.py"
+        - "transcriptforge/output.py"
+        - "tests/test_transcription.py"
+        - "tests/test_output.py"
+    - task: "Speaker grouping, profile matching, and name reconciliation"
+      start_with:
+        - "transcriptforge/speakers.py"
+        - "transcriptforge/speaker_names.py"
+        - "transcriptforge/outlook_calendar.py"
+      then_check:
+        - "transcriptforge/controller.py"
+        - "tests/test_speakers.py"
+        - "tests/test_speaker_names.py"
+        - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+    - task: "Settings, history, profile data, and portable configuration"
+      start_with:
+        - "transcriptforge/settings.py"
+        - "transcriptforge/configuration.py"
+        - "transcriptforge/speakers.py"
+      then_check:
+        - "tests/test_settings.py"
+        - "tests/test_configuration.py"
+        - "README.md"
+    - task: "Command line and scheduled scanning"
+      start_with:
+        - "transcriptforge/cli.py"
+        - "transcriptforge/scheduler.py"
+        - "transcriptforge/__main__.py"
+      then_check:
+        - "Install_TranscriptForgeTask.ps1"
+        - "Remove_TranscriptForgeTask.ps1"
+        - "tests/test_cli.py"
+    - task: "Installation, dependencies, and release setup"
+      start_with:
+        - "requirements.txt"
+        - "Setup_TranscriptForge.bat"
+        - "DOC/INSTALLATION.md"
+      then_check:
+        - "Run_TranscriptForge.bat"
+        - "transcriptforge/version.py"
+        - "AGENTS.md"
+    - task: "Speaker-recognition proposals versus current implementation"
+      start_with:
+        - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
+      then_check:
+        - "transcriptforge/speakers.py"
+        - "tests/test_speakers.py"
+        - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md"
+  verification_rule: "Verify important context claims against source records and tests. For code changes, follow AGENTS.md, bump transcriptforge/version.py, run compileall and the full unittest suite, and update README.md when user-facing behavior changes."
+
+code_profile:
+  languages_and_toolchains:
+    - "Python 3.11 or newer is specified by the Windows installation guide."
+    - "Windows batch and PowerShell scripts support installation, launch, and optional scheduled scanning."
+    - "Tkinter is the desktop UI toolkit; the test suite uses Python unittest."
+  architecture:
+    - "A Tkinter desktop GUI and automation-oriented CLI call shared local processing and persistence modules."
+    - "transcriptforge/controller.py coordinates a background transcription job and GUI review checkpoints."
+    - "Media decoding, local Whisper transcription, optional speaker analysis, profile storage, and Markdown output are split into focused package modules."
+  entry_points:
+    - "py -3 -m transcriptforge launches the GUI or handles the scheduled-scan switch."
+    - "py -3 -m transcriptforge.cli invokes command-line transcription and management commands."
+    - "Run_TranscriptForge.bat launches the desktop application on Windows."
+    - "Setup_TranscriptForge.bat installs dependencies and initializes model files."
+    - "Install_TranscriptForgeTask.ps1 registers the optional recurring Windows Task Scheduler job."
+  interfaces:
+    - "Local input media extensions are defined in transcriptforge/media.py: WAV, MP3, M4A, AAC, MP4, MOV, and MKV."
+    - "The main transcript interface is a timestamped Markdown file."
+    - "CLI speaker review uses a JSON file and an explicit rerun handoff."
+    - "Optional calendar data is read through the local Outlook Classic COM interface."
+  data_models_and_persistence:
+    - "transcriptforge/models.py defines transcript segments, processing statistics, results, and suspect ranges."
+    - "Application settings and histories are JSON files under %LOCALAPPDATA%\\LocalAudioTranscriber when LOCALAPPDATA is available."
+    - "speaker-profiles.json stores confirmed speaker names and voice embeddings; the current speaker-recognition report describes schema 3 and its archive/active-set model."
+    - "Portable .tfconfig packages are ZIP archives containing selected preferences, templates, speaker profiles, and sample rejection decisions."
+    - "Whisper model files are cached under %LOCALAPPDATA%\\LocalAudioTranscriber\\whisper-models by default."
+  critical_logic:
+    - "transcriptforge/media.py:decode_to_wav converts supported inputs to temporary mono 16 kHz PCM."
+    - "transcriptforge/transcription.py:transcribe_samples runs local Whisper in windows and retries suspect ranges."
+    - "transcriptforge/quality.py identifies weak or suspicious repeated output ranges."
+    - "transcriptforge/speakers.py implements voice analysis, profile matching, clustering, review, and profile learning."
+    - "transcriptforge/outlook_calendar.py:meetings_on reads appointments from the local default calendar."
+    - "transcriptforge/output.py:render_markdown formats transcript output and atomic_write saves it."
+  configuration:
+    - "transcriptforge/version.py is the application version source of truth."
+    - "requirements.txt declares direct runtime dependencies."
+    - "User settings are local to each PC; portable configuration intentionally excludes machine-specific paths and histories."
+    - "The app has a machine-specific default recordings-folder path; verify it before relying on it on another PC."
+  build_test_release:
+    - "Setup_TranscriptForge.bat checks Python 3.11+, installs requirements, and initializes Whisper and Resemblyzer model files."
+    - "Run py -3 -m compileall -q transcriptforge tests after code changes."
+    - "Run py -3 -m unittest discover -s tests -v after code changes."
+    - "Update README.md when user-facing behavior, dependencies, storage, or workflows change."
+    - "Increment the application version in transcriptforge/version.py for every code change as specified in AGENTS.md."
+  technical_dependencies:
+    - "openai-whisper"
+    - "torch"
+    - "numpy"
+    - "imageio-ffmpeg"
+    - "resemblyzer"
+    - "pywin32"
+
+documentation_profile:
+  record_types:
+    - "User and repository documentation in Markdown."
+    - "Windows installation, launch, and scheduled-task scripts."
+    - "A feasibility plan and an earlier project proposal."
+    - "An example configuration directory; real .tfconfig packages are ignored by Git."
+  document_status_model:
+    - "README.md and DOC/INSTALLATION.md describe supported user workflows; verify specific behavior against implementation."
+    - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md documents current speaker-recognition behavior, evidence, and limitations."
+    - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md records proposed changes and evaluation goals, not implemented features."
+    - "DOC/Audio_Transcriber_Project_Proposal.md is an earlier implementation proposal and may be superseded by code."
+    - "No formal document approval or release-signoff process was identified in the reviewed repository."
+  evidence_relationships:
+    - "Current implementation claims should be supported by source and relevant tests."
+    - "Current-state documentation summarizes the speaker implementation and should be checked against source."
+    - "The feasibility plan and earlier proposal provide intent or history, not proof of current behavior."
+  review_and_approval_workflows:
+    - "No formal document approval workflow is documented."
+    - "AGENTS.md requires the context file to change in the same work as each feature addition or change."
+  templates_and_outputs:
+    - "The CLI can create speaker-review JSON for a human to edit and submit on a rerun."
+    - "Transcript output is Markdown; optional portable settings use the .tfconfig format."
+  freshness_and_retention:
+    - "Update this context when architecture, source-of-truth files, workflows, dependencies, or project constraints change."
+    - "Use semantic versioning for context-file updates and keep AGENTS.md pointed at the current versioned filename."
+    - "Do not put recordings, transcripts, model weights, profiles, credentials, or private package contents into project documentation."
