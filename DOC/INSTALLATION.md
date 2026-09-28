@@ -1,6 +1,6 @@
 # TranscriptForge installation guide
 
-Current application version: `0.25.0`.
+Current application version: `0.25.1`.
 
 ## Quick setup on a new Windows PC
 

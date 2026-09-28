@@ -7,20 +7,20 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.0.0"
+  version: "1.0.1"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-09-25"
+  last_updated: "2026-09-28"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.0.1.yaml"
   source_snapshot:
-    type: "git_commit"
-    value: "c4d00a6bb58a5570cd653a36accabb1f93d13182"
+    type: "inventory_snapshot"
+    value: "Reviewed 2026-09-28 from the working tree based on commit 1b6e80fc8a83ad4b76084c894ab5df52b910976e; includes the v0.25.1 workflow fixes documented below."
   coverage_limits:
-    - "The source snapshot is commit c4d00a6. This context file and the related AGENTS.md update were created after that snapshot."
+    - "The baseline repository commit is 1b6e80f; this context revision also documents the v0.25.1 fixes made during the same working-tree review."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
-    - "Outlook and full GUI runtime behavior were not exercised during this context-file creation; related claims are based on source, tests, and project documentation."
+    - "Live Outlook and interactive GUI behavior were not exercised during this code change; workflow claims are based on source, unit tests, and project documentation."
 
 scope:
   purpose:
@@ -185,7 +185,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.1.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -230,7 +230,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.0.1.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -297,8 +297,11 @@ workflows:
       - "Existing local speaker profiles."
     steps:
       - "Leave the explicit no-meeting option selected to preserve the current preference-driven workflow."
+      - "If the main window already has a selected appointment that matches one returned for the recording date, carry that selection and its invitee-count limit into the scheduled-recording prompt."
+      - "If the earlier selection does not match the recording date, keep the date-specific appointments available and do not silently substitute the unrelated meeting."
       - "When a meeting is selected, use its roster to shortlist saved profiles for that recording."
       - "Ask for confirmation when an Outlook spelling resembles a saved profile or expected-speaker name; confirmed aliases use Outlook spelling."
+      - "Preserve free-form speaker names on Enter, focus loss, and suggestion refresh; make committed names available to later review rows."
       - "Apply the attendee count only as a soft review limit; keep extra distinct voice groups available for review."
     outputs:
       - "Meeting-specific speaker suggestions and user-confirmed profile/name decisions."
@@ -442,6 +445,14 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "Git commit c4d00a6bb58a5570cd653a36accabb1f93d13182; application version 0.25.0."
+  - date: "2026-09-28"
+    description: "Carried a matching main-window Outlook selection into the scheduled-recording prompt and preserved free-form speaker names while suggestions update or the field loses focus."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/speaker_names.py"
+      - "tests/test_app_meeting.py"
+      - "tests/test_speaker_names.py"
+    evidence: "Source review and unit tests for application version 0.25.1."
 
 ai_navigation:
   bootstrap_sequence:
@@ -452,7 +463,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.0.1.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

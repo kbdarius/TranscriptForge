@@ -16,6 +16,6 @@
 
 ## Project context
 
-- Use `TRANSCRIPTFORGE_CONTEXT_v1.0.0.yaml` as the current versioned project context map.
+- Use `TRANSCRIPTFORGE_CONTEXT_v1.0.1.yaml` as the current versioned project context map.
 - Update the context file in the same change whenever adding a feature or changing an existing feature or user-facing workflow.
 - Bump the context file's semantic version for context updates and update this reference in the same change whenever its versioned filename changes.

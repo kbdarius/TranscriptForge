@@ -1,6 +1,7 @@
 import unittest
 
 from transcriptforge.speaker_names import (
+    commit_speaker_name_value,
     filter_speaker_name_choices,
     similar_speaker_names,
     speaker_name_suggestions,
@@ -47,6 +48,26 @@ class SpeakerNameChoiceTests(unittest.TestCase):
         self.assertEqual(
             similar_speaker_names("Alex Yu", ["Alexander Yu", "Blair Moore"]),
             [("Alexander Yu", speaker_name_similarity("Alex Yu", "Alexander Yu"))],
+        )
+
+    def test_enter_preserves_free_form_name_instead_of_picking_first_suggestion(self):
+        self.assertEqual(
+            commit_speaker_name_value(
+                "New Guest", ["New Guesthouse", "New Group"], -1
+            ),
+            "New Guest",
+        )
+
+    def test_enter_commits_only_an_explicitly_highlighted_suggestion(self):
+        self.assertEqual(
+            commit_speaker_name_value(
+                "Search text", ["Alex Yu", "Alexander Yu"], 1
+            ),
+            "Alexander Yu",
+        )
+        self.assertEqual(
+            commit_speaker_name_value(" Guest  Person ", ["Alex Yu"], 4),
+            "Guest Person",
         )
 
 

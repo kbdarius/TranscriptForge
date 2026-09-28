@@ -23,8 +23,8 @@ from .models_cache import MODEL_NAMES, cache_dir, download_model, model_availabl
 from .output import append_markdown_content
 from .settings import FilenameTemplateSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
-from .speaker_names import similar_speaker_names, speaker_name_choices, speaker_name_suggestions
-from .outlook_calendar import meetings_on, today_meetings
+from .speaker_names import commit_speaker_name_value, similar_speaker_names, speaker_name_choices, speaker_name_suggestions
+from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
 from .version import __version__
 
 DEFAULT_RECORDINGS_FOLDER = Path(r"C:\Users\dariusk\OneDrive - stryten.com\Recordings")
@@ -33,7 +33,7 @@ NO_MEETING_SELECTION = "No meeting selected - use current workflow"
 class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
         super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
-        self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_meetings = []
+        self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_speaker_limit_var = None; self._scheduled_meeting_user_selected = False; self._scheduled_meetings = []
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_today_outlook_meetings)
     def _window_title(self, label):
@@ -361,12 +361,15 @@ class App(tk.Tk):
         self._scheduled_meeting_combo = meeting_combo
         self._scheduled_meeting_var = meeting_var
         self._scheduled_meeting_status = meeting_status
+        self._scheduled_speaker_limit_var = speaker_limit_var
+        self._scheduled_meeting_user_selected = False
         self._scheduled_meetings = []
 
         def selected_meeting():
             return next((meeting for meeting in self._scheduled_meetings if meeting.display == meeting_var.get()), None)
 
         def update_limit(_event=None):
+            self._scheduled_meeting_user_selected = True
             meeting = selected_meeting()
             speaker_limit_var.set(str(len(meeting.possible_speakers)) if meeting and meeting.possible_speakers else "")
 
@@ -379,6 +382,8 @@ class App(tk.Tk):
                 self._scheduled_meeting_combo = None
                 self._scheduled_meeting_var = None
                 self._scheduled_meeting_status = None
+                self._scheduled_speaker_limit_var = None
+                self._scheduled_meeting_user_selected = False
                 self._scheduled_meetings = []
 
         def transcribe():
@@ -467,12 +472,62 @@ class App(tk.Tk):
         self._scheduled_meetings = meetings
         values = [NO_MEETING_SELECTION, *(meeting.display for meeting in meetings)]
         self._scheduled_meeting_combo.configure(values=values)
+        preferred = self._matching_scheduled_meeting(
+            meetings, self.selected_outlook_meeting
+        )
+        selected = None
+        if self._scheduled_meeting_user_selected:
+            selected = next(
+                (
+                    meeting
+                    for meeting in meetings
+                    if meeting.display == self._scheduled_meeting_var.get()
+                ),
+                None,
+            )
+        else:
+            selected = preferred
+            self._scheduled_meeting_var.set(
+                selected.display if selected else NO_MEETING_SELECTION
+            )
+        if self._scheduled_speaker_limit_var is not None:
+            self._scheduled_speaker_limit_var.set(
+                str(len(selected.possible_speakers))
+                if selected and selected.possible_speakers
+                else ""
+            )
         if self._scheduled_meeting_status is not None:
-            self._scheduled_meeting_status.set(
+            status = (
                 f"{len(meetings)} Outlook meeting(s) found for the recording date."
                 if meetings
                 else "No Outlook meetings found for the recording date. You can still transcribe without one."
             )
+            if self.selected_outlook_meeting and not self._scheduled_meeting_user_selected:
+                if preferred:
+                    status += " The meeting selected in the main window was carried over."
+                else:
+                    status += " The main-window selection is not on this recording date; choose a meeting here if needed."
+            self._scheduled_meeting_status.set(status)
+
+    @staticmethod
+    def _matching_scheduled_meeting(
+        meetings: list[OutlookMeeting], preferred: OutlookMeeting | None
+    ) -> OutlookMeeting | None:
+        if preferred is None:
+            return None
+        exact = next((meeting for meeting in meetings if meeting == preferred), None)
+        if exact is not None:
+            return exact
+        preferred_subject = " ".join(preferred.subject.split()).casefold()
+        return next(
+            (
+                meeting
+                for meeting in meetings
+                if meeting.start == preferred.start
+                and " ".join(meeting.subject.split()).casefold() == preferred_subject
+            ),
+            None,
+        )
 
     def _set_scheduled_meeting_error(self, dialog, error):
         if dialog is not self._scheduled_meeting_dialog or self._scheduled_meeting_combo is None:
@@ -484,6 +539,10 @@ class App(tk.Tk):
             return
         self._scheduled_meetings = []
         self._scheduled_meeting_combo.configure(values=[NO_MEETING_SELECTION])
+        if self._scheduled_meeting_var is not None:
+            self._scheduled_meeting_var.set(NO_MEETING_SELECTION)
+        if self._scheduled_speaker_limit_var is not None:
+            self._scheduled_speaker_limit_var.set("")
         if self._scheduled_meeting_status is not None:
             self._scheduled_meeting_status.set(
                 f"Could not load Outlook meetings: {error}. You can still transcribe without one."
@@ -644,10 +703,7 @@ class App(tk.Tk):
             return "break"
         if event.keysym == "Return":
             index = getattr(combo, "_tf_suggestion_index", -1)
-            if suggestions and index >= 0:
-                combo.set(suggestions[index])
-            elif suggestions and combo.get().casefold() not in {name.casefold() for name in suggestions}:
-                combo.set(suggestions[0])
+            combo.set(commit_speaker_name_value(combo.get(), suggestions, index))
             self._remember_speaker_name(combo, combos, names, recent_names)
             combo.tk.call("ttk::combobox::Unpost", str(combo))
             return "break"
@@ -660,11 +716,49 @@ class App(tk.Tk):
         selected = " ".join(combo.get().split())
         if not selected:
             return
+        combo.set(selected)
         recent_names[:] = [name for name in recent_names if name.casefold() != selected.casefold()]
         recent_names.insert(0, selected)
         choices = speaker_name_choices(names, recent_names)
         for name_combo in combos:
-            name_combo.configure(values=choices)
+            if (
+                name_combo is not combo
+                and not App._speaker_name_combo_has_focus(name_combo)
+            ):
+                name_combo.configure(values=choices)
+
+    @staticmethod
+    def _speaker_name_combo_has_focus(combo):
+        try:
+            focused = combo.focus_get()
+        except (AttributeError, tk.TclError):
+            return False
+        return focused is combo or (focused is not None and str(focused) == str(combo))
+
+    def _prepare_speaker_name_combo(self, combo, names, recent_names):
+        def prepare_if_alive():
+            try:
+                if not combo.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            value = combo.get()
+            combo.configure(values=speaker_name_choices(names, recent_names))
+            combo.set(value)
+            combo.selection_range(0, tk.END)
+
+        self.after_idle(prepare_if_alive)
+
+    def _remember_speaker_name_after_focus_out(self, combo, combos, names, recent_names):
+        def remember_if_alive():
+            try:
+                if not combo.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            self._remember_speaker_name(combo, combos, names, recent_names)
+
+        self.after_idle(remember_if_alive)
 
     def _show_speaker_review(self, payload):
         analysis = payload["analysis"]
@@ -695,8 +789,9 @@ class App(tk.Tk):
         ttk.Label(frame, text=instructions, wraplength=720).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             frame,
-            text="Type to filter names; use the arrow keys and Enter to select. "
-            "Invitees are suggested first; type a guest name for a voice not on the list. Names selected in this review move to the top.",
+            text="Type to filter names. Use Up/Down then Enter, or click a suggestion to select it. "
+            "A typed guest name stays when you click away or continue. Invitees are suggested first; "
+            "names selected in this review move to the top.",
         ).pack(anchor="w", pady=(0, 10))
 
         name_vars = {}
@@ -734,8 +829,8 @@ class App(tk.Tk):
             combo.pack(side="right", fill="x", expand=True)
             combo.bind(
                 "<FocusIn>",
-                lambda _event, widget=combo: widget.after_idle(
-                    lambda: widget.selection_range(0, tk.END)
+                lambda _event, widget=combo: self._prepare_speaker_name_combo(
+                    widget, existing_names, recent_names
                 ),
             )
             combo.bind(
@@ -761,12 +856,8 @@ class App(tk.Tk):
             )
             combo.bind(
                 "<FocusOut>",
-                lambda event, widget=combo, original=suggestion: (
-                    self._remember_speaker_name(
-                        widget, name_combos, existing_names, recent_names
-                    )
-                    if widget.get() != original
-                    else None
+                lambda event, widget=combo: self._remember_speaker_name_after_focus_out(
+                    widget, name_combos, existing_names, recent_names
                 ),
             )
             name_combos.append(combo)

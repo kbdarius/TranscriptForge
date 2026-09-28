@@ -97,3 +97,14 @@ def speaker_name_suggestions(
 ) -> list[str]:
     """Return the small visible type-ahead list used by the review UI."""
     return filter_speaker_name_choices(names, query, recent_names)[:max(1, limit)]
+
+
+def commit_speaker_name_value(
+    current_value: str, suggestions: list[str], selected_index: int = -1
+) -> str:
+    """Commit an explicitly highlighted suggestion or preserve free-form input."""
+    if 0 <= selected_index < len(suggestions):
+        value = suggestions[selected_index]
+    else:
+        value = current_value
+    return " ".join(str(value).split())
