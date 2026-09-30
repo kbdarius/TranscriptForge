@@ -53,7 +53,7 @@ def export_configuration(path: Path, preferences: dict, filename_templates: list
         "format": "TranscriptForge configuration",
         "version": PACKAGE_VERSION,
         "includes": ["preferences", "filename_templates", "speaker_profiles", "speaker_sample_rejections"],
-        "excludes": ["recording_folder", "output_location_history", "meeting_output_settings", "recording_history", "whisper_models", "audio", "transcripts"],
+        "excludes": ["recording_folder", "live_recording_folder", "output_location_history", "meeting_output_settings", "recording_history", "whisper_models", "audio", "transcripts"],
     }
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as package:
         package.writestr(_MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")

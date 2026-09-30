@@ -1,10 +1,32 @@
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from .models import Segment, ProcessingStats
+
+_INVALID_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED_FILENAME_STEMS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def sanitize_output_filename(value: str) -> str:
+    """Return a Windows-safe Markdown filename without path separators."""
+    filename = _INVALID_FILENAME_CHARACTERS.sub("-", str(value)).strip().rstrip(" .")
+    if not filename:
+        return ""
+    if filename.split(".", 1)[0].upper() in _RESERVED_FILENAME_STEMS:
+        filename = f"-{filename}"
+    return Path(filename).with_suffix(".md").name
+
 
 def timestamp(seconds: float) -> str:
     seconds = max(0.0, seconds); whole = int(seconds); fraction = int(round((seconds - whole) * 100))

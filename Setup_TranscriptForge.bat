@@ -53,7 +53,7 @@ echo Installing TranscriptForge dependencies without using the local pip cache..
 if errorlevel 1 goto :dependency_failed
 
 echo Verifying installed packages and bundled FFmpeg...
-%PYTHON% -c "import whisper, torch, numpy, imageio_ffmpeg, resemblyzer; print('Whisper:', whisper.__version__); print('Torch:', torch.__version__); print('NumPy:', numpy.__version__); print('FFmpeg:', imageio_ffmpeg.get_ffmpeg_exe()); print('Speaker encoder package: ready')"
+%PYTHON% -c "import whisper, torch, numpy, imageio_ffmpeg, resemblyzer, soundcard; print('Whisper:', whisper.__version__); print('Torch:', torch.__version__); print('NumPy:', numpy.__version__); print('FFmpeg:', imageio_ffmpeg.get_ffmpeg_exe()); print('Speaker encoder package: ready'); print('System audio capture package: ready')"
 if errorlevel 1 goto :verification_failed
 
 if /i "%~1"=="all" goto :download_all

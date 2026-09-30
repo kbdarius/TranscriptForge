@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from transcriptforge.settings import OutputLocationHistory
+from transcriptforge.settings import LiveRecordingFolderSettings, OutputLocationHistory
 
 
 class SettingsTests(unittest.TestCase):
@@ -27,3 +27,13 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(history.locations[0].endswith("one"), True)
             self.assertEqual(len(history.locations), 2)
 
+    def test_live_recording_folder_round_trips_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "live-recording-folder.json"
+            settings = LiveRecordingFolderSettings(path)
+            settings.set(root / "capture")
+
+            loaded = LiveRecordingFolderSettings(path)
+
+            self.assertEqual(loaded.folder, str((root / "capture").resolve()))

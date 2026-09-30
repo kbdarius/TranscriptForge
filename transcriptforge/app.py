@@ -20,8 +20,9 @@ from .controller import TranscriptionController
 from .configuration import export_configuration, import_configuration
 from .media import SUPPORTED_EXTENSIONS
 from .models_cache import MODEL_NAMES, cache_dir, download_model, model_available
-from .output import append_markdown_content
-from .settings import FilenameTemplateSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
+from .output import append_markdown_content, sanitize_output_filename
+from .recording import PlaybackAudioRecorder
+from .settings import FilenameTemplateSettings, LiveRecordingFolderSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
 from .speaker_names import commit_speaker_name_value, similar_speaker_names, speaker_name_choices, speaker_name_suggestions
 from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
@@ -34,8 +35,13 @@ class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
         super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
         self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_speaker_limit_var = None; self._scheduled_meeting_user_selected = False; self._scheduled_meetings = []
+        self.live_recording_settings = LiveRecordingFolderSettings()
+        default_live_folder = self.live_recording_settings.folder or self.recording_settings.folder or str(Path.home() / "Recordings")
+        self.live_recording_folder_var = tk.StringVar(value=default_live_folder)
+        self.live_recorder = None; self._capture_should_transcribe = False; self._capture_discard = False; self._close_after_capture = False; self._pending_live_transcription = False
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_today_outlook_meetings)
+        self.protocol("WM_DELETE_WINDOW", self._close_application)
     def _window_title(self, label):
         return f"TranscriptForge v{__version__} - {label}"
     def _build(self):
@@ -45,7 +51,12 @@ class App(tk.Tk):
         self.retain = tk.BooleanVar(); self.include_timestamps = tk.BooleanVar(value=True); self.open_after = tk.BooleanVar(value=True); self.identify_speakers = tk.BooleanVar(value=False); self.rename_source = tk.BooleanVar(value=True)
         self.progress = ttk.Progressbar(root, mode="determinate"); self.progress.grid(row=5, column=0, columnspan=4, sticky="ew", pady=8); ttk.Label(root, textvariable=self.status_var).grid(row=6, column=0, columnspan=4, sticky="w")
         self.log = tk.Text(root, height=15, state="disabled", wrap="word"); self.log.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=8); root.rowconfigure(7, weight=1)
-        self.new_button = ttk.Button(root, text="New transcription", command=self._new_transcription); self.new_button.grid(row=8, column=0, sticky="w"); self.transcribe_button = ttk.Button(root, text="Transcribe", command=self._start, state="disabled"); self.transcribe_button.grid(row=8, column=1, sticky="e"); self.cancel_button = ttk.Button(root, text="Cancel", command=self._cancel, state="disabled"); self.cancel_button.grid(row=8, column=2, padx=5); self.append_button = ttk.Button(root, text="Add content", command=self._append_content, state="disabled"); self.append_button.grid(row=8, column=3, padx=5)
+        self.new_button = ttk.Button(root, text="New transcription", command=self._new_transcription); self.new_button.grid(row=8, column=0, sticky="w")
+        actions = ttk.Frame(root); actions.grid(row=8, column=1, columnspan=3, sticky="e")
+        self.record_button = ttk.Button(actions, text="Record system audio", command=self._toggle_live_recording); self.record_button.pack(side="left", padx=4); self._job_controls.append(self.record_button)
+        self.transcribe_button = ttk.Button(actions, text="Transcribe", command=self._start, state="disabled"); self.transcribe_button.pack(side="left", padx=4)
+        self.cancel_button = ttk.Button(actions, text="Cancel", command=self._cancel, state="disabled"); self.cancel_button.pack(side="left", padx=4)
+        self.append_button = ttk.Button(actions, text="Add content", command=self._append_content, state="disabled"); self.append_button.pack(side="left", padx=4)
 
     def _meeting_row(self, parent, row):
         ttk.Label(parent, text="Today's Outlook meeting").grid(row=row, column=0, sticky="w", pady=5)
@@ -72,7 +83,8 @@ class App(tk.Tk):
         self.outlook_loading = True
         if getattr(self, "refresh_meetings_button", None):
             self.refresh_meetings_button.configure(state="disabled")
-        self.meeting_var.set("Loading today's meetings…")
+        if self.selected_outlook_meeting is None:
+            self.meeting_var.set("Loading today's meetings...")
 
         def work():
             try:
@@ -95,7 +107,24 @@ class App(tk.Tk):
         values = [meeting.display for meeting in meetings]
         self.meeting_combo.configure(values=values, state="readonly")
         self.refresh_meetings_button.configure(state="normal")
-        self.meeting_var.set("Select a meeting (optional)" if values else "No Outlook meetings today")
+        selected = self._matching_scheduled_meeting(meetings, self.selected_outlook_meeting)
+        if selected is None:
+            self.selected_outlook_meeting = None
+            self.meeting_var.set("Select a meeting (optional)" if values else "No Outlook meetings today")
+        else:
+            self.selected_outlook_meeting = selected
+            self.meeting_var.set(selected.display)
+
+    def _set_selected_meeting(self, meeting):
+        self.selected_outlook_meeting = meeting
+        if meeting is not None:
+            self.meeting_var.set(meeting.display)
+        else:
+            self.meeting_var.set(
+                "Select a meeting (optional)"
+                if self.today_outlook_meetings
+                else "No Outlook meetings today"
+            )
 
     def _select_outlook_meeting(self, _event=None):
         selected = next((meeting for meeting in self.today_outlook_meetings if meeting.display == self.meeting_var.get()), None)
@@ -146,7 +175,11 @@ class App(tk.Tk):
         filename_base = saved["filename_base"] if saved else meeting.subject
         if saved:
             self.folder_var.set(saved["output_folder"])
-        self.filename_var.set(f"{filename_base}-{self._meeting_date(meeting):%Y%m%d}.md")
+        self.filename_var.set(
+            sanitize_output_filename(
+                f"{filename_base}-{self._meeting_date(meeting):%Y%m%d}.md"
+            )
+        )
         self.filename_templates.remember(filename_base)
 
     def _accept_speaker_name_selection(self, event, combo, combos, names, recent_names):
@@ -236,6 +269,37 @@ class App(tk.Tk):
         ttk.Label(frame, text="These settings apply to the next transcription.", wraplength=420).pack(anchor="w", pady=(0, 8))
         ttk.Label(frame, text="Language").pack(anchor="w"); ttk.Entry(frame, textvariable=self.language_var, width=12).pack(anchor="w", pady=(2, 8))
         ttk.Label(frame, text="Expected speakers (optional, comma-separated)").pack(anchor="w"); ttk.Entry(frame, textvariable=self.expected_speakers_var, width=42).pack(anchor="w", pady=(2, 8))
+        live_recording = ttk.LabelFrame(frame, text="Live system audio recording", padding=8)
+        live_recording.pack(fill="x", pady=(4, 8))
+        ttk.Label(
+            live_recording,
+            text="Captures playback from the default Windows output device. Microphone audio is not included.",
+            wraplength=400,
+        ).pack(anchor="w")
+        live_folder_row = ttk.Frame(live_recording)
+        live_folder_row.pack(fill="x", pady=(6, 0))
+        ttk.Entry(
+            live_folder_row,
+            textvariable=self.live_recording_folder_var,
+            width=34,
+        ).pack(side="left", fill="x", expand=True)
+
+        def browse_live_recording_folder():
+            current = Path(self.live_recording_folder_var.get()).expanduser()
+            selected = filedialog.askdirectory(
+                title=self._window_title("Choose live recording folder"),
+                initialdir=str(current if current.is_dir() else Path.home()),
+                mustexist=True,
+                parent=dialog,
+            )
+            if selected:
+                self.live_recording_folder_var.set(selected)
+
+        ttk.Button(
+            live_folder_row,
+            text="Browse",
+            command=browse_live_recording_folder,
+        ).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(frame, text="Retain intermediate WAV", variable=self.retain).pack(anchor="w", pady=2)
         ttk.Checkbutton(frame, text="Include timestamped segments", variable=self.include_timestamps).pack(anchor="w", pady=2)
         ttk.Checkbutton(frame, text="Open transcript after completion", variable=self.open_after).pack(anchor="w", pady=2)
@@ -251,17 +315,41 @@ class App(tk.Tk):
             name = " ".join(template_var.get().strip().split())
             if not name:
                 return messagebox.showinfo(self._window_title("Common filename"), "Type or select a recurring meeting name first.")
+            if not self._save_live_recording_settings(dialog):
+                return
+            self._save_preferences()
             self.filename_templates.remember(name); template_combo.configure(values=self.filename_templates.names)
             source = Path(self.input_var.get())
             date = datetime.fromtimestamp(source.stat().st_mtime).strftime("%Y%m%d") if source.is_file() else datetime.now().strftime("%Y%m%d")
-            self.filename_var.set(f"{name}-{date}.md")
+            self.filename_var.set(sanitize_output_filename(f"{name}-{date}.md"))
             dialog.grab_release(); dialog.destroy()
         ttk.Button(template_controls, text="Add to list", command=add_template).pack(side="left"); ttk.Button(template_controls, text="Use for output filename", command=use_template).pack(side="left", padx=6)
         transfer = ttk.LabelFrame(frame, text="Transfer to another PC", padding=8); transfer.pack(fill="x", pady=(14, 0)); ttk.Label(transfer, text="Transfers preferences, filename templates, and speaker training data. Computer-specific paths and histories stay local.", wraplength=420).pack(anchor="w"); transfer_buttons = ttk.Frame(transfer); transfer_buttons.pack(fill="x", pady=(8, 0)); ttk.Button(transfer_buttons, text="Export configuration", command=self._export_configuration).pack(side="left"); ttk.Button(transfer_buttons, text="Import configuration", command=self._import_configuration).pack(side="left", padx=6)
         controls = ttk.Frame(frame); controls.pack(fill="x", pady=(14, 0)); ttk.Button(controls, text="Manage profiles", command=self._manage_profiles).pack(side="left"); ttk.Button(controls, text="View history", command=self._show_history).pack(side="left", padx=6)
         def close_setup():
-            self._save_preferences(); dialog.grab_release(); dialog.destroy()
+            if self._save_live_recording_settings(dialog):
+                self._save_preferences(); dialog.grab_release(); dialog.destroy()
         ttk.Button(controls, text="Close", command=close_setup).pack(side="right")
+
+    def _save_live_recording_settings(self, parent=None):
+        folder = self.live_recording_folder_var.get().strip()
+        if not folder:
+            messagebox.showerror(
+                self._window_title("Live recording folder required"),
+                "Choose a folder for live recordings in Setup.",
+                parent=parent or self,
+            )
+            return False
+        try:
+            self.live_recording_settings.set(folder)
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror(
+                self._window_title("Could not save live recording folder"),
+                str(exc),
+                parent=parent or self,
+            )
+            return False
+        return True
     def _show_history(self):
         dialog = tk.Toplevel(self); dialog.title(self._window_title("Transcription history")); dialog.transient(self); dialog.geometry("1200x560"); dialog.minsize(800, 360)
         frame = ttk.Frame(dialog, padding=12); frame.pack(fill="both", expand=True)
@@ -317,7 +405,7 @@ class App(tk.Tk):
         configured = Path(self.recording_settings.folder) if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER
         initialdir = configured if configured.is_dir() else Path.home()
         path = filedialog.askopenfilename(title=self._window_title("Choose input file"), initialdir=str(initialdir), filetypes=[("Media", " ".join(f"*{x}" for x in SUPPORTED_EXTENSIONS)), ("All files", "*.*")])
-        if path: self.input_var.set(path); p = Path(path); self.folder_var.set(str(p.parent)); self.filename_var.set(p.stem + ".md"); self.transcribe_button.configure(state="normal")
+        if path: self.input_var.set(path); p = Path(path); self.folder_var.set(str(p.parent)); self.filename_var.set(sanitize_output_filename(p.stem + ".md")); self.transcribe_button.configure(state="normal")
     def _validate_saved_recording_folder(self):
         configured = Path(self.recording_settings.folder) if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER
         if configured.is_dir():
@@ -334,7 +422,7 @@ class App(tk.Tk):
         if initial_input:
             source = Path(initial_input)
             if source.is_file():
-                self.input_var.set(str(source)); self.folder_var.set(str(source.parent)); self.filename_var.set(source.stem + ".md"); self.transcribe_button.configure(state="normal")
+                self.input_var.set(str(source)); self.folder_var.set(str(source.parent)); self.filename_var.set(sanitize_output_filename(source.stem + ".md")); self.transcribe_button.configure(state="normal")
                 if auto_start:
                     self.after(250, lambda: self._show_scheduled_choice(source))
     def _show_scheduled_choice(self, source: Path):
@@ -562,6 +650,212 @@ class App(tk.Tk):
             self._write_log("No recording folder selected. Use Browse when choosing an input file.")
     def _browse_folder(self):
         path = filedialog.askdirectory(title=self._window_title("Choose output folder")); self.folder_var.set(path) if path else None
+
+    def _toggle_live_recording(self):
+        if self.live_recorder is not None:
+            self._stop_live_recording()
+        else:
+            self._start_live_recording()
+
+    def _start_live_recording(self):
+        controller_thread = getattr(self.controller, "thread", None)
+        if self._pending_live_transcription or getattr(self, "awaiting_transcription", False) or (
+            controller_thread is not None and controller_thread.is_alive()
+        ):
+            return messagebox.showinfo(
+                self._window_title("Transcription in progress"),
+                "Wait for the current recording to enter transcription, or finish or cancel the current transcription before starting another live recording.",
+                parent=self,
+            )
+        if not self._save_live_recording_settings():
+            return
+        folder = Path(self.live_recording_settings.folder)
+        recorder = PlaybackAudioRecorder(
+            folder,
+            lambda kind, value: self.events.put((f"live_recording_{kind}", value)),
+        )
+        try:
+            recorder.start()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return messagebox.showerror(
+                self._window_title("Could not start live recording"),
+                str(exc),
+                parent=self,
+            )
+        self.live_recorder = recorder
+        self._capture_should_transcribe = False
+        self._capture_discard = False
+        self._close_after_capture = False
+        self._set_job_fields_enabled(False)
+        self.record_button.configure(text="Starting recording...", state="disabled")
+        self.transcribe_button.configure(state="disabled")
+        self.new_button.configure(state="disabled")
+        self.append_button.configure(state="disabled")
+        self.cancel_button.configure(text="Discard recording", state="normal")
+        self.status_var.set("Opening the default Windows playback device...")
+        self._write_log(f"Starting live system-audio recording in {folder}")
+
+    def _stop_live_recording(self):
+        if self.live_recorder is None:
+            return
+        self._capture_should_transcribe = True
+        self._capture_discard = False
+        self.record_button.configure(text="Finalizing recording...", state="disabled")
+        self.cancel_button.configure(state="disabled")
+        self.status_var.set("Stopping and saving the live recording...")
+        self.live_recorder.stop()
+
+    def _cancel(self):
+        if self.live_recorder is not None:
+            if not messagebox.askyesno(
+                self._window_title("Discard live recording?"),
+                "Stop and discard the current live recording?",
+                parent=self,
+            ):
+                return
+            self._capture_should_transcribe = False
+            self._capture_discard = True
+            self.record_button.configure(text="Discarding recording...", state="disabled")
+            self.cancel_button.configure(state="disabled")
+            self.status_var.set("Stopping and discarding the live recording...")
+            self.live_recorder.stop()
+            return
+        if self.controller:
+            self.controller.cancel()
+            self.status_var.set("Cancellation requested...")
+
+    def _close_application(self):
+        if self.live_recorder is None:
+            self.destroy()
+            return
+        if not messagebox.askyesno(
+            self._window_title("Recording in progress"),
+            "Stop and save the live recording before closing TranscriptForge?",
+            parent=self,
+        ):
+            return
+        self._capture_should_transcribe = False
+        self._capture_discard = False
+        self._close_after_capture = True
+        self.record_button.configure(text="Saving recording...", state="disabled")
+        self.cancel_button.configure(state="disabled")
+        self.status_var.set("Finalizing the recording before closing...")
+        self.live_recorder.stop()
+
+    def _prepare_recorded_input(self, path: Path):
+        self.input_var.set(str(path))
+        self.folder_var.set(str(path.parent))
+        self.filename_var.set(sanitize_output_filename(f"{path.stem}.md"))
+        if self.selected_outlook_meeting is not None:
+            self._apply_meeting_output(self.selected_outlook_meeting)
+        self.transcribe_button.configure(state="normal")
+
+    def _remember_live_recording(self, path: Path):
+        try:
+            RecordingHistory().update(path, "pending")
+        except OSError as exc:
+            self._write_log(f"Could not add the live recording to local history: {exc}")
+
+    def _finish_live_recording(self, path: Path):
+        if self.live_recorder is not None:
+            self.live_recorder.join()
+        should_transcribe = self._capture_should_transcribe
+        discard = self._capture_discard
+        close_when_done = self._close_after_capture
+        self.live_recorder = None
+        self._capture_should_transcribe = False
+        self._capture_discard = False
+        self._close_after_capture = False
+        self._reset()
+        if discard:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._write_log(f"Could not discard the live recording: {exc}")
+                messagebox.showerror(
+                    self._window_title("Could not discard recording"),
+                    str(exc),
+                    parent=self,
+                )
+            self.status_var.set("Live recording discarded.")
+            return
+        if not path.is_file():
+            if close_when_done:
+                self.destroy()
+                return
+            messagebox.showerror(
+                self._window_title("Recording file unavailable"),
+                f"The live recording was not saved at:\n\n{path}",
+                parent=self,
+            )
+            self.status_var.set("Live recording file unavailable.")
+            return
+        self._prepare_recorded_input(path)
+        self._remember_live_recording(path)
+        self._write_log(f"Saved live system-audio recording: {path}")
+        if close_when_done:
+            self.destroy()
+            return
+        if should_transcribe:
+            self._pending_live_transcription = True
+            if self.outlook_loading:
+                self.record_button.configure(state="disabled")
+                self.transcribe_button.configure(state="disabled")
+                self.new_button.configure(state="disabled")
+            self._maybe_start_pending_live_transcription()
+        else:
+            self.status_var.set("Live recording saved. Choose Transcribe when ready.")
+
+    def _fail_live_recording(self, error):
+        path, detail, has_audio = error
+        if self.live_recorder is not None:
+            self.live_recorder.join()
+        discard = self._capture_discard
+        close_when_done = self._close_after_capture
+        self.live_recorder = None
+        self._capture_should_transcribe = False
+        self._capture_discard = False
+        self._close_after_capture = False
+        self._reset()
+        saved_path = Path(path) if path is not None else None
+        if discard and saved_path is not None:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._write_log(f"Could not discard the partial live recording: {exc}")
+                messagebox.showerror(
+                    self._window_title("Could not discard recording"),
+                    str(exc),
+                    parent=self,
+                )
+            self.status_var.set("Live recording discarded.")
+            return
+        if has_audio and saved_path is not None and saved_path.is_file():
+            self._remember_live_recording(saved_path)
+            if not close_when_done:
+                self._prepare_recorded_input(saved_path)
+            detail = f"{detail}\n\nPartial audio was saved and can be transcribed:\n{saved_path}"
+        if close_when_done:
+            self.destroy()
+            return
+        self.status_var.set("Live recording failed.")
+        self._write_log(f"Live system-audio recording failed: {detail}")
+        messagebox.showerror(
+            self._window_title("Live recording failed"),
+            detail,
+            parent=self,
+        )
+
+    def _maybe_start_pending_live_transcription(self):
+        if not self._pending_live_transcription or self.outlook_loading:
+            return
+        self._pending_live_transcription = False
+        self.record_button.configure(state="normal")
+        self.transcribe_button.configure(state="normal" if self.input_var.get() else "disabled")
+        self.new_button.configure(state="normal")
+        self.status_var.set("Recording saved. Starting transcription...")
+        self.after_idle(self._start)
+
     def _remember_output_location(self, location: Path):
         self.output_history.remember(location); self.folder_combo.configure(values=self.output_history.locations); self.folder_var.set(str(location))
     def _write_log(self, text): self.log.configure(state="normal"); self.log.insert("end", text + "\n"); self.log.see("end"); self.log.configure(state="disabled")
@@ -576,11 +870,16 @@ class App(tk.Tk):
         if getattr(self, "awaiting_transcription", False):
             return self._confirm_transcription()
         meeting = meeting_override if use_meeting_override else self.selected_outlook_meeting
+        if use_meeting_override:
+            self._set_selected_meeting(meeting)
         expected_speakers = self._outlook_speaker_names(meeting) if meeting else self._speaker_shortlist() or None
         if meeting and expected_speakers and max_speakers is None and not use_meeting_override:
             max_speakers = len(expected_speakers)
         self._save_preferences()
-        source = Path(self.input_var.get()); output = Path(self.folder_var.get()) / self.filename_var.get(); output = output.with_suffix(".md")
+        filename = sanitize_output_filename(self.filename_var.get())
+        if not filename: return messagebox.showerror(self._window_title("Invalid output"), "Enter an output filename.")
+        self.filename_var.set(filename)
+        source = Path(self.input_var.get()); output = Path(self.folder_var.get()) / filename
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS: return messagebox.showerror(self._window_title("Invalid input"), "Choose an existing supported audio or video file.")
         if output.resolve() == source.resolve(): return messagebox.showerror(self._window_title("Invalid output"), "The output must not overwrite the input.")
         if output.exists() and not messagebox.askyesno(self._window_title("Overwrite?"), f"Replace {output.name}?"): return
@@ -607,7 +906,10 @@ class App(tk.Tk):
                 names.setdefault(canonical.casefold(), canonical)
         return sorted(names.values(), key=str.casefold)
     def _confirm_transcription(self):
-        source = Path(self.input_var.get()); output = (Path(self.folder_var.get()) / self.filename_var.get()).with_suffix(".md")
+        filename = sanitize_output_filename(self.filename_var.get())
+        if not filename: return messagebox.showerror(self._window_title("Invalid output"), "Enter an output filename.")
+        self.filename_var.set(filename)
+        source = Path(self.input_var.get()); output = Path(self.folder_var.get()) / filename
         if not source.is_file() or source.suffix.lower() not in SUPPORTED_EXTENSIONS:
             return messagebox.showerror(self._window_title("Invalid input"), "Choose an existing supported audio or video file.")
         if output.resolve() == source.resolve():
@@ -623,8 +925,6 @@ class App(tk.Tk):
                 return
             rename_overwrite = True
         self.active_source = source; self.active_output = output; self.awaiting_transcription = False; self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.status_var.set("Starting transcription..."); self.controller.set_output(output, self.rename_source.get(), rename_overwrite); self.controller.continue_transcription()
-    def _cancel(self):
-        if self.controller: self.controller.cancel(); self.status_var.set("Cancellation requested...")
     def _speaker_shortlist(self):
         return [" ".join(value.strip().split()) for value in self.expected_speakers_var.get().replace(";", ",").split(",") if value.strip()]
     def _download(self):
@@ -900,10 +1200,23 @@ class App(tk.Tk):
                 elif kind == "status": self.status_var.set(value)
                 elif kind == "log": self._write_log(str(value))
                 elif kind == "model_ready": self._update_model_button()
-                elif kind == "outlook_meetings": self._set_today_outlook_meetings(value)
-                elif kind == "outlook_error": self.outlook_loading = False; self.outlook_ready = True; self.meeting_combo.configure(values=(), state="disabled"); self.refresh_meetings_button.configure(state="normal"); self.meeting_var.set("Outlook calendar unavailable"); self._write_log(f"Could not read today's Outlook meetings: {value}")
+                elif kind == "outlook_meetings": self._set_today_outlook_meetings(value); self._maybe_start_pending_live_transcription()
+                elif kind == "outlook_error":
+                    self.outlook_loading = False; self.outlook_ready = True; self.refresh_meetings_button.configure(state="normal")
+                    if self.selected_outlook_meeting is None:
+                        self.meeting_combo.configure(values=(), state="disabled"); self.meeting_var.set("Outlook calendar unavailable")
+                    else:
+                        self.meeting_combo.configure(values=[self.selected_outlook_meeting.display], state="readonly"); self.meeting_var.set(self.selected_outlook_meeting.display)
+                    self._write_log(f"Could not read today's Outlook meetings: {value}"); self._maybe_start_pending_live_transcription()
                 elif kind == "scheduled_meetings": self._set_scheduled_meetings(*value)
                 elif kind == "scheduled_meeting_error": self._set_scheduled_meeting_error(*value)
+                elif kind == "live_recording_started":
+                    if self.live_recorder is not None:
+                        self.record_button.configure(text="Stop & transcribe", state="normal")
+                        self.status_var.set("Recording system playback. Stop when the meeting ends.")
+                        self._write_log(f"Recording system playback to {value}")
+                elif kind == "live_recording_completed": self._finish_live_recording(Path(value))
+                elif kind == "live_recording_error": self._fail_live_recording(value)
                 elif kind == "speaker_review": self._show_speaker_review(value)
                 elif kind == "ready": self.awaiting_transcription = True; self._set_job_fields_enabled(True, include_input=False); self.transcribe_button.configure(state="normal", text="Start transcription"); self.status_var.set(str(value)); self._write_log(str(value))
                 elif kind == "done": self.status_var.set("Completed"); self._write_log(f"Wrote {value}"); self._remember_output_location(Path(value).parent); self._record_history("completed", Path(value)); self._complete(); self.append_button.configure(state="normal"); self._open_output(value) if self.open_after.get() else None
@@ -919,8 +1232,25 @@ class App(tk.Tk):
         for control in self._job_controls:
             if (include_setup or control is not self.setup_button) and (include_input or control is not self.input_browse_button):
                 control.configure(state=("readonly" if enabled and control is self.meeting_combo else state))
-    def _reset(self): self.awaiting_transcription = False; self._set_job_fields_enabled(True); self.transcribe_button.configure(state="normal" if self.input_var.get() else "disabled", text="Transcribe"); self.new_button.configure(state="normal"); self.cancel_button.configure(state="disabled")
-    def _complete(self): self.awaiting_transcription = False; self._set_job_fields_enabled(True); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.new_button.configure(state="normal"); self.cancel_button.configure(state="disabled")
+        if enabled and (
+            getattr(self, "awaiting_transcription", False)
+            or self._pending_live_transcription
+        ):
+            self.record_button.configure(state="disabled")
+    def _reset(self):
+        self.awaiting_transcription = False
+        self._set_job_fields_enabled(True)
+        self.record_button.configure(text="Record system audio", state="normal")
+        self.transcribe_button.configure(state="normal" if self.input_var.get() else "disabled", text="Transcribe")
+        self.new_button.configure(state="normal")
+        self.cancel_button.configure(text="Cancel", command=self._cancel, state="disabled")
+    def _complete(self):
+        self.awaiting_transcription = False
+        self._set_job_fields_enabled(True)
+        self.record_button.configure(text="Record system audio", state="normal")
+        self.transcribe_button.configure(state="disabled", text="Transcribe")
+        self.new_button.configure(state="normal")
+        self.cancel_button.configure(text="Cancel", command=self._cancel, state="disabled")
     def _record_history(self, status, output=None):
         source = getattr(self, "active_source", None)
         if source:

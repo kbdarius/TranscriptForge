@@ -1,6 +1,6 @@
 # TranscriptForge installation guide
 
-Current application version: `0.25.1`.
+Current application version: `0.26.0`.
 
 ## Quick setup on a new Windows PC
 
@@ -29,6 +29,8 @@ That downloads `tiny.en`, `base.en`, and `small.en`, so allow additional disk sp
 
 The setup script uses per-user Python package installation and the CPU PyTorch build. Administrator rights are not normally required. NVIDIA/CUDA is not required for the supported default workflow.
 
+Live recording captures playback from the default Windows output device through WASAPI loopback. It does not capture microphone audio. Choose the local recording destination in **Setup > Live system audio recording**; the capture-folder setting is separate from the folder used by scheduled scans.
+
 ## Direct Python dependencies
 
 These are the direct runtime dependencies declared in `requirements.txt` and installed by setup:
@@ -40,6 +42,7 @@ These are the direct runtime dependencies declared in `requirements.txt` and ins
 | `numpy` | Audio sample arrays, RMS calculations, and embeddings |
 | `imageio-ffmpeg` | Supplies a bundled FFmpeg executable |
 | `resemblyzer` | Local voice embeddings for speaker clustering and profile matching |
+| `soundcard` | Windows WASAPI loopback capture for live system playback recording |
 
 No separate `ffmpeg`, `ffprobe`, or `whisper` command-line installation is required. TranscriptForge invokes the FFmpeg executable supplied by `imageio-ffmpeg` and passes decoded samples directly to Whisper.
 
@@ -77,7 +80,7 @@ Speaker profiles are stored under:
 %LOCALAPPDATA%\LocalAudioTranscriber\speaker-profiles.json
 ```
 
-The profile file contains confirmed voice embeddings and names, not permanent audio samples. Temporary decoded WAV files and speaker review clips are removed after processing. Other local settings include output-folder history, recording-folder settings, filename templates, transcription history, and removed-sample decisions under `%LOCALAPPDATA%\LocalAudioTranscriber\`.
+The profile file contains confirmed voice embeddings and names, not permanent audio samples. Temporary decoded WAV files and speaker review clips are removed after processing. Other local settings include output-folder history, scheduled-scan folder settings, live-recording folder settings, filename templates, transcription history, and removed-sample decisions under `%LOCALAPPDATA%\LocalAudioTranscriber\`.
 
 ## Restricted-PC troubleshooting
 

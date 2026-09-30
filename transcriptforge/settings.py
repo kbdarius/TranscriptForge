@@ -134,6 +134,47 @@ class RecordingFolderSettings:
             raise
 
 
+class LiveRecordingFolderSettings:
+    """Persist the destination for in-app playback recordings on this PC."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "live-recording-folder.json"
+        self.folder: str | None = None
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(value, dict) and isinstance(value.get("folder"), str):
+                self.folder = value["folder"]
+        except (OSError, ValueError, TypeError):
+            self.folder = None
+
+    def set(self, folder: Path | str) -> None:
+        self.folder = str(Path(folder).expanduser().resolve())
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            prefix="live-recording-folder-",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump({"folder": self.folder}, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
 class FilenameTemplateSettings:
     """Persist recurring meeting names used to construct dated outputs."""
 

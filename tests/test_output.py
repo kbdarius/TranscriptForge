@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from transcriptforge.models import Segment, ProcessingStats
-from transcriptforge.output import append_markdown_content, render_markdown, atomic_write, rename_media_to_match_output
+from transcriptforge.output import append_markdown_content, render_markdown, atomic_write, rename_media_to_match_output, sanitize_output_filename
 
 class OutputTests(unittest.TestCase):
     def test_render_and_atomic_write(self):
@@ -29,3 +29,16 @@ class OutputTests(unittest.TestCase):
             append_markdown_content(path, "Alex", "Follow-up message")
             text = path.read_text(encoding="utf-8")
             self.assertIn("## Additional content", text); self.assertIn("**Provided by:** Alex", text); self.assertIn("Follow-up message", text)
+
+    def test_output_filename_replaces_slashes_and_other_windows_invalid_characters(self):
+        self.assertEqual(
+            sanitize_output_filename("TB CI/CD using TeamCity-20260930.md"),
+            "TB CI-CD using TeamCity-20260930.md",
+        )
+        self.assertEqual(sanitize_output_filename(r"bad\name:?.txt"), "bad-name--.md")
+
+    def test_output_filename_cannot_be_a_windows_device_name(self):
+        self.assertEqual(sanitize_output_filename("CON.txt"), "-CON.md")
+
+    def test_empty_output_filename_remains_invalid(self):
+        self.assertEqual(sanitize_output_filename("   "), "")

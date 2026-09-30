@@ -147,6 +147,75 @@ class ScheduledMeetingDialogTests(unittest.TestCase):
         )
         self.assertIsNone(App._matching_scheduled_meeting([another_day], selected))
 
+    def test_main_meeting_selection_survives_calendar_refresh(self):
+        selected = OutlookMeeting(
+            "Example Standup",
+            datetime(2026, 9, 28, 8, 45),
+            datetime(2026, 9, 28, 9, 0),
+            "Sample Organizer",
+            ("Guest One",),
+        )
+        refreshed = OutlookMeeting(
+            " Example   Standup ",
+            selected.start,
+            selected.end,
+            "Sample Organizer",
+            ("Guest One", "Guest Two"),
+        )
+        state = SimpleNamespace(
+            outlook_loading=True,
+            outlook_ready=False,
+            today_outlook_meetings=[],
+            selected_outlook_meeting=selected,
+            _matching_scheduled_meeting=App._matching_scheduled_meeting,
+            meeting_combo=_FakeCombo(),
+            refresh_meetings_button=_FakeCombo(),
+            meeting_var=_FakeVariable(),
+        )
+
+        App._set_today_outlook_meetings(state, [refreshed])
+
+        self.assertIs(state.selected_outlook_meeting, refreshed)
+        self.assertEqual(state.meeting_var.get(), refreshed.display)
+
+    def test_scheduled_meeting_override_updates_main_window_selection(self):
+        selected = OutlookMeeting(
+            "Example Standup",
+            datetime(2026, 9, 28, 8, 45),
+            datetime(2026, 9, 28, 9, 0),
+            "Sample Organizer",
+            ("Guest One",),
+        )
+        state = SimpleNamespace(
+            today_outlook_meetings=[selected],
+            selected_outlook_meeting=None,
+            meeting_var=_FakeVariable("Select a meeting (optional)"),
+        )
+
+        App._set_selected_meeting(state, selected)
+
+        self.assertIs(state.selected_outlook_meeting, selected)
+        self.assertEqual(state.meeting_var.get(), selected.display)
+
+    def test_explicit_no_meeting_override_clears_main_selection(self):
+        selected = OutlookMeeting(
+            "Example Standup",
+            datetime(2026, 9, 28, 8, 45),
+            datetime(2026, 9, 28, 9, 0),
+            "Sample Organizer",
+            ("Guest One",),
+        )
+        state = SimpleNamespace(
+            today_outlook_meetings=[selected],
+            selected_outlook_meeting=selected,
+            meeting_var=_FakeVariable(selected.display),
+        )
+
+        App._set_selected_meeting(state, None)
+
+        self.assertIsNone(state.selected_outlook_meeting)
+        self.assertEqual(state.meeting_var.get(), "Select a meeting (optional)")
+
     @staticmethod
     def _scheduled_dialog_state(selected_meeting, user_selected=False):
         dialog = _FakeDialog()
