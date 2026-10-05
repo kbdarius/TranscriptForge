@@ -14,9 +14,17 @@
 - Update `README.md` when user-visible behavior, dependencies, storage, or workflows change.
 - Do not commit generated recordings, decoded WAV files, models, voice profiles, or temporary output.
 
+## GitHub publishing
+
+- The user has requested that completed repository changes be kept up to date on GitHub. Treat this as standing authorization to commit and push task-related changes after verification unless the user opts out for a task.
+- Stage only files belonging to the current task. Do not include unrelated or pre-existing user changes, generated files, or user-supplied assets.
+- Follow the repository's commit-message convention and include the required `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
+- Never amend an existing commit, force-push, or skip hooks or signing. If the upstream is unavailable, the push is rejected, or a conflict or repository policy blocks publishing, stop and report the blocker without claiming success.
+- After pushing, verify that the task commit is on the configured GitHub upstream and report its commit hash.
+
 ## Project context
 
-- Use `TRANSCRIPTFORGE_CONTEXT_v1.1.0.yaml` as the current versioned project context map.
+- Use `TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml` as the current versioned project context map.
 - Update the context file in the same change whenever adding a feature or changing an existing feature or user-facing workflow.
 - Bump the context file's semantic version for context updates and update this reference in the same change whenever its versioned filename changes.
 - Sanitize the desktop GUI's generated and user-entered output filename field before creating a file. Replace `/` and other Windows-invalid filename characters with `-`; do not alter directory paths.

@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.1.0"
+  version: "1.1.1"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-09-30"
+  last_updated: "2026-10-05"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.1.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-09-30 from the working tree at application version 0.26.0; includes filename safety, meeting-selection carryover, live Windows playback recording, and related tests and documentation."
+    value: "Reviewed 2026-10-05 from the working tree at application version 0.26.1; includes recent-provider memory and ordering in the Add content dialog, alongside the previously implemented filename, meeting-selection, and live playback workflows."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.26.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.26.1; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -152,7 +152,7 @@ project_components:
 
   - name: "Local settings and portable configuration"
     path: "transcriptforge/settings.py"
-    purpose: "Persists application preferences, live-recording folder, and histories locally and imports or exports portable configuration packages."
+    purpose: "Persists application preferences, live-recording folder, recent content providers, and histories locally and imports or exports portable configuration packages."
     critical: true
     authoritative_sources:
       - "transcriptforge/settings.py"
@@ -167,7 +167,7 @@ project_components:
       - "JSON settings stores and ZIP-based .tfconfig packages"
     constraints:
       - "Configuration packages can contain biometric speaker embeddings and must be handled as sensitive data."
-      - "Machine-specific scheduled-scan and live-recording paths, output histories, models, audio, and transcripts are excluded from portable configuration packages."
+      - "Machine-specific scheduled-scan and live-recording paths, recent content-provider history, output histories, models, audio, and transcripts are excluded from portable configuration packages."
 
   - name: "Documentation and verification"
     path: "DOC/"
@@ -211,7 +211,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -223,10 +223,12 @@ file_structure:
       purpose: "Windows launcher for the desktop application."
     - path: "transcriptforge/"
       purpose: "Application package containing the GUI, CLI, processing pipeline, settings, and speaker logic."
+    - path: "transcriptforge/settings.py"
+      purpose: "Local JSON settings, including the recent Add content provider history."
     - path: "transcriptforge/recording.py"
       purpose: "Background Windows playback loopback recording and PCM WAV output."
     - path: "tests/"
-      purpose: "Standard-library unittest coverage for CLI, settings, output, live recording, transcription, speaker, and meeting behavior."
+      purpose: "Standard-library unittest coverage for CLI, settings, output, live recording, transcription, speaker, meeting, and provider-history behavior."
     - path: "DOC/README.md"
       purpose: "Index of project documentation."
     - path: "DOC/INSTALLATION.md"
@@ -258,7 +260,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -286,6 +288,22 @@ workflows:
     failure_handling:
       - "Whisper transcription requires an already cached model; use the GUI Download model action or the CLI model download command."
       - "Use Setup_TranscriptForge.bat to install or verify required packages and model files."
+
+  - name: "Append content to a transcript"
+    trigger: "The user selects Add content after a transcription completes."
+    inputs:
+      - "The current transcript file."
+      - "A provider name chosen from saved speaker profiles or typed into the editable dropdown."
+      - "Additional text to append."
+    steps:
+      - "Preselect the most recently used provider when the dialog opens."
+      - "List up to ten most recently used provider names first, then Unknown, then other profile names alphabetically."
+      - "Persist provider recency locally and append the content under the transcript's Additional content section."
+    outputs:
+      - "An updated transcript and local provider-selection history."
+    failure_handling:
+      - "If local history cannot be saved, report the error and do not append content until provider selection is remembered."
+      - "If transcript writing fails, report the file error in the dialog."
 
   - name: "Live system-audio recording"
     trigger: "The user selects Record system audio in the desktop GUI."
@@ -501,6 +519,17 @@ constraints_and_known_issues:
     evidence:
       - "tests/test_output.py"
       - "README.md"
+  - description: "The Add content dialog remembers the last provider and keeps the ten most recently used names at the top of the dropdown."
+    status: "confirmed"
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/settings.py"
+      - "transcriptforge/configuration.py"
+    workaround: "Provider history is local to this PC and is not transferred in portable configuration packages."
+    evidence:
+      - "tests/test_settings.py"
+      - "tests/test_configuration.py"
+      - "README.md"
 
 recent_changes_summary:
   - date: "2026-09-25"
@@ -534,6 +563,17 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "Source review and automated tests for application version 0.26.0."
+  - date: "2026-10-05"
+    description: "Added local memory for the last Add content provider and prioritized the ten most recently used provider names in the dropdown."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/settings.py"
+      - "transcriptforge/configuration.py"
+      - "tests/test_settings.py"
+      - "tests/test_configuration.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "Source review and automated tests for application version 0.26.1."
 
 ai_navigation:
   bootstrap_sequence:
@@ -544,7 +584,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.1.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -653,6 +693,7 @@ code_profile:
     - "transcriptforge/models.py defines transcript segments, processing statistics, results, and suspect ranges."
     - "Application settings and histories are JSON files under %LOCALAPPDATA%\\LocalAudioTranscriber when LOCALAPPDATA is available."
     - "live-recording-folder.json stores the per-PC destination for live playback recordings; it is distinct from recording-folder.json."
+    - "content-provider-history.json stores the last selected Add content provider and up to ten recent names locally; recent names lead the dropdown and this history is excluded from portable configuration packages."
     - "speaker-profiles.json stores confirmed speaker names and voice embeddings; the current speaker-recognition report describes schema 3 and its archive/active-set model."
     - "Portable .tfconfig packages are ZIP archives containing selected preferences, templates, speaker profiles, and sample rejection decisions."
     - "Whisper model files are cached under %LOCALAPPDATA%\\LocalAudioTranscriber\\whisper-models by default."
@@ -663,12 +704,14 @@ code_profile:
     - "transcriptforge/speakers.py implements voice analysis, profile matching, clustering, review, and profile learning."
     - "transcriptforge/outlook_calendar.py:meetings_on reads appointments from the local default calendar."
     - "transcriptforge/recording.py:PlaybackAudioRecorder captures playback and finalizes PCM WAV output."
+    - "transcriptforge/settings.py:ContentProviderHistory persists the last Add content provider and orders recent provider names."
     - "transcriptforge/output.py:render_markdown formats transcript output and atomic_write saves it."
     - "transcriptforge/output.py:sanitize_output_filename replaces Windows-invalid filename characters before GUI output paths are built."
   configuration:
     - "transcriptforge/version.py is the application version source of truth."
     - "requirements.txt declares direct runtime dependencies."
     - "User settings are local to each PC; portable configuration intentionally excludes machine-specific paths and histories."
+    - "content-provider-history.json stores the local last-used Add content provider and ten-name recency list; configuration transfer excludes it."
     - "The app has a machine-specific default recordings-folder path; verify it before relying on it on another PC."
     - "The GUI output filename field replaces slash and other Windows-invalid filename characters with hyphens; directory paths are not changed."
   build_test_release:

@@ -1,6 +1,6 @@
 # TranscriptForge installation guide
 
-Current application version: `0.26.0`.
+Current application version: `0.26.1`.
 
 ## Quick setup on a new Windows PC
 
@@ -80,7 +80,7 @@ Speaker profiles are stored under:
 %LOCALAPPDATA%\LocalAudioTranscriber\speaker-profiles.json
 ```
 
-The profile file contains confirmed voice embeddings and names, not permanent audio samples. Temporary decoded WAV files and speaker review clips are removed after processing. Other local settings include output-folder history, scheduled-scan folder settings, live-recording folder settings, filename templates, transcription history, and removed-sample decisions under `%LOCALAPPDATA%\LocalAudioTranscriber\`.
+The profile file contains confirmed voice embeddings and names, not permanent audio samples. Temporary decoded WAV files and speaker review clips are removed after processing. Other local settings include output-folder history, scheduled-scan folder settings, live-recording folder settings, the **Add content** provider history in `content-provider-history.json`, filename templates, transcription history, and removed-sample decisions under `%LOCALAPPDATA%\LocalAudioTranscriber\`.
 
 ## Restricted-PC troubleshooting
 

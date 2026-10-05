@@ -1,5 +1,7 @@
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from transcriptforge.configuration import export_configuration, import_configuration
@@ -17,6 +19,9 @@ class ConfigurationTests(unittest.TestCase):
             rejections.add([0.0, 1.0], "Too noisy or unclear", "note", "meeting.wav")
             package = root / "transfer.tfconfig"
             export_configuration(package, {"identify_speakers": True, "language": "en"}, ["Standup"], profiles, rejections)
+            with zipfile.ZipFile(package) as exported:
+                manifest = json.loads(exported.read("manifest.json"))
+            self.assertIn("content_provider_history", manifest["excludes"])
             destination_profiles = SpeakerProfileStore(target / "speaker-profiles.json")
             self.assertTrue(destination_profiles.add_confirmed_embedding("Alex", [0.0, 1.0], metadata={"source": "new-pc"})); destination_profiles.save()
             result = import_configuration(package, target)

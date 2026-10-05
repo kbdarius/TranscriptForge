@@ -22,7 +22,7 @@ from .media import SUPPORTED_EXTENSIONS
 from .models_cache import MODEL_NAMES, cache_dir, download_model, model_available
 from .output import append_markdown_content, sanitize_output_filename
 from .recording import PlaybackAudioRecorder
-from .settings import FilenameTemplateSettings, LiveRecordingFolderSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
+from .settings import ContentProviderHistory, FilenameTemplateSettings, LiveRecordingFolderSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
 from .speaker_names import commit_speaker_name_value, similar_speaker_names, speaker_name_choices, speaker_name_suggestions
 from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
@@ -36,6 +36,7 @@ class App(tk.Tk):
         super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
         self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_speaker_limit_var = None; self._scheduled_meeting_user_selected = False; self._scheduled_meetings = []
         self.live_recording_settings = LiveRecordingFolderSettings()
+        self.content_provider_history = ContentProviderHistory()
         default_live_folder = self.live_recording_settings.folder or self.recording_settings.folder or str(Path.home() / "Recordings")
         self.live_recording_folder_var = tk.StringVar(value=default_live_folder)
         self.live_recorder = None; self._capture_should_transcribe = False; self._capture_discard = False; self._close_after_capture = False; self._pending_live_transcription = False
@@ -1268,10 +1269,57 @@ class App(tk.Tk):
         dialog = tk.Toplevel(self); dialog.title(self._window_title("Add content to transcript")); dialog.transient(self); dialog.grab_set(); frame = ttk.Frame(dialog, padding=12); frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Paste the message or other content to append to the transcript.").pack(anchor="w")
         ttk.Label(frame, text="Provided by").pack(anchor="w", pady=(10, 2))
-        provider = tk.StringVar(value="Unknown"); choices = ["Unknown"] + sorted(SpeakerProfileStore().profiles); ttk.Combobox(frame, textvariable=provider, values=choices, width=36).pack(fill="x")
+        speaker_names = sorted(SpeakerProfileStore().profiles, key=str.casefold)
+        provider_choices = self.content_provider_history.choices(speaker_names)
+        provider_name = next(
+            (
+                name for name in provider_choices
+                if name.casefold() == self.content_provider_history.last_selected.casefold()
+            ),
+            "Unknown",
+        )
+        provider = tk.StringVar(value=provider_name)
+        provider_combo = ttk.Combobox(
+            frame,
+            textvariable=provider,
+            values=provider_choices,
+            width=36,
+        )
+        provider_combo.pack(fill="x")
+        ttk.Label(
+            frame,
+            text="Recently selected names appear first; the last used name is selected by default.",
+        ).pack(anchor="w", pady=(2, 0))
+        def remember_provider(_event=None):
+            selected = " ".join(provider.get().split()) or "Unknown"
+            try:
+                self.content_provider_history.remember(selected)
+            except (OSError, TypeError, ValueError) as exc:
+                messagebox.showerror(
+                    self._window_title("Could not remember provider"),
+                    str(exc),
+                    parent=dialog,
+                )
+                return False
+            choices = self.content_provider_history.choices(speaker_names)
+            provider_combo.configure(values=choices)
+            provider.set(
+                next(
+                    (
+                        name for name in choices
+                        if name.casefold() == self.content_provider_history.last_selected.casefold()
+                    ),
+                    self.content_provider_history.last_selected,
+                )
+            )
+            return True
+
+        provider_combo.bind("<<ComboboxSelected>>", remember_provider)
         ttk.Label(frame, text="Content").pack(anchor="w", pady=(10, 2)); content = tk.Text(frame, width=80, height=10, wrap="word"); content.pack(fill="both", expand=True)
         def save_content():
             try:
+                if not remember_provider():
+                    return
                 append_markdown_content(Path(path), provider.get(), content.get("1.0", "end")); self._write_log(f"Appended content provided by {provider.get().strip() or 'Unknown'} to {Path(path).name}"); dialog.grab_release(); dialog.destroy()
             except (OSError, ValueError) as exc:
                 messagebox.showerror(self._window_title("Could not add content"), str(exc), parent=dialog)

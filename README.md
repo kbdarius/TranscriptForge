@@ -2,7 +2,7 @@
 
 TranscriptForge is a local-first Windows desktop application for turning an audio or video file into a timestamped Markdown transcript. Audio is decoded locally with the FFmpeg executable supplied by `imageio-ffmpeg`, then passed to local Whisper as NumPy samples. No audio or transcript is uploaded.
 
-Current version: `0.26.0`.
+Current version: `0.26.1`.
 
 For a new Windows PC, run [Setup_TranscriptForge.bat](Setup_TranscriptForge.bat) once before launching the application. See the [installation guide](DOC/INSTALLATION.md) for the complete dependency list, model setup, and restricted-PC troubleshooting. The [documentation index](DOC/README.md) links the project proposal, current speaker-recognition behavior, and feasibility plan. The optional local Outlook calendar selector requires Outlook Classic on that PC.
 
@@ -61,13 +61,13 @@ The main window keeps the core file, model, and transcription controls visible. 
 
 Setup also includes **View history**, which displays the locally stored transcription ledger with the recording filename prominently shown, status, update time, full paths, and horizontal scrolling for long locations. Select a row to see its paths, open the transcript, or open its output folder.
 
-Setup includes **Export configuration** and **Import configuration**. The portable `.tfconfig` package transfers the Setup preferences, selected Whisper model name, recurring filename templates, confirmed speaker embeddings, and removed-sample decisions. Import merges speaker data with profiles already on the destination PC, so it does not discard newer training. It intentionally excludes recording-folder settings, output-location dropdown history, meeting-output settings, transcription history, Whisper model files, audio, transcripts, and other computer-specific paths; those remain local to each PC.
+Setup includes **Export configuration** and **Import configuration**. The portable `.tfconfig` package transfers the Setup preferences, selected Whisper model name, recurring filename templates, confirmed speaker embeddings, and removed-sample decisions. Import merges speaker data with profiles already on the destination PC, so it does not discard newer training. It intentionally excludes recording-folder settings, output-location dropdown history, recent **Provided by** names, meeting-output settings, transcription history, Whisper model files, audio, transcripts, and other computer-specific paths; those remain local to each PC.
 
 The [example configuration](example%20configuration/README.md) folder contains batch files for creating and importing a private configuration package. The package is ignored by Git because it contains sensitive voice-learning data. Copy that private `.tfconfig` file to the destination PC alongside the setup batch file; do not commit it or send it through an untrusted channel.
 
 When a scheduled scan finds a recording, TranscriptForge first asks whether to **Transcribe**, **Ignore**, or **Delete** it. **Ignore** keeps the audio in the recording folder and prevents future scans from selecting it. **Delete** asks for confirmation, removes the audio from that folder, and keeps a `deleted` history entry. History includes **Unignore / requeue**, which restores an ignored recording (or a pending recording left for later) to the next scan.
 
-After a transcription finishes, use **Add content** to append messages or other manually supplied material. Choose an existing speaker from the editable **Provided by** dropdown or type a new name. The content is added under an `Additional content` section and is not used for voice-profile learning.
+After a transcription finishes, use **Add content** to append messages or other manually supplied material. Choose an existing speaker from the editable **Provided by** dropdown or type a new name. The last selected provider is remembered and preselected next time; the ten most recently used names stay at the top of the dropdown, followed by **Unknown** and the remaining names alphabetically. This local history is stored in `%LOCALAPPDATA%\LocalAudioTranscriber\content-provider-history.json` and is not included in portable configuration packages. The content is added under an `Additional content` section and is not used for voice-profile learning.
 
 Setup also provides a saved **Common filename** list for recurring meetings. Add a name such as `SW Daily Standup`, select it, and choose **Use for output filename**. TranscriptForge constructs a dated Markdown filename such as `SW Daily Standup-20260826.md` using the input recording's modified date. The list is stored locally in `%LOCALAPPDATA%\LocalAudioTranscriber\filename-templates.json`; the normal output filename field remains available for one-off names.
 

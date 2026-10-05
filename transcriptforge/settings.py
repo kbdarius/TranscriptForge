@@ -10,6 +10,8 @@ from pathlib import Path
 
 MAX_OUTPUT_LOCATIONS = 5
 MAX_FILENAME_TEMPLATES = 30
+MAX_RECENT_CONTENT_PROVIDERS = 10
+UNKNOWN_CONTENT_PROVIDER = "Unknown"
 
 
 def settings_dir() -> Path:
@@ -44,6 +46,114 @@ class PreferencesSettings:
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 json.dump(self.values, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+
+class ContentProviderHistory:
+    """Persist recently selected Add content providers on this PC."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or settings_dir() / "content-provider-history.json"
+        self.recent_providers: list[str] = []
+        self.last_selected = UNKNOWN_CONTENT_PROVIDER
+        self.load()
+
+    @staticmethod
+    def _clean_name(value: str) -> str:
+        return " ".join(str(value).split())
+
+    def load(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                return
+            recent = value.get("recent_providers", [])
+            if isinstance(recent, list):
+                seen = set()
+                for item in recent:
+                    if not isinstance(item, str):
+                        continue
+                    name = self._clean_name(item)
+                    key = name.casefold()
+                    if not name or key == UNKNOWN_CONTENT_PROVIDER.casefold() or key in seen:
+                        continue
+                    self.recent_providers.append(name)
+                    seen.add(key)
+                    if len(self.recent_providers) >= MAX_RECENT_CONTENT_PROVIDERS:
+                        break
+            selected = value.get("last_selected")
+            if isinstance(selected, str) and self._clean_name(selected):
+                self.last_selected = self._clean_name(selected)
+                if self.last_selected.casefold() == UNKNOWN_CONTENT_PROVIDER.casefold():
+                    self.last_selected = UNKNOWN_CONTENT_PROVIDER
+        except (OSError, ValueError, TypeError):
+            self.recent_providers = []
+            self.last_selected = UNKNOWN_CONTENT_PROVIDER
+
+    def remember(self, name: str) -> None:
+        clean_name = self._clean_name(name)
+        if not clean_name:
+            clean_name = UNKNOWN_CONTENT_PROVIDER
+        if clean_name.casefold() == UNKNOWN_CONTENT_PROVIDER.casefold():
+            clean_name = UNKNOWN_CONTENT_PROVIDER
+        self.last_selected = clean_name
+        if clean_name.casefold() != UNKNOWN_CONTENT_PROVIDER.casefold():
+            self.recent_providers = [
+                item for item in self.recent_providers
+                if item.casefold() != clean_name.casefold()
+            ]
+            self.recent_providers.insert(0, clean_name)
+            self.recent_providers = self.recent_providers[:MAX_RECENT_CONTENT_PROVIDERS]
+        self.save()
+
+    def choices(self, profile_names: list[str]) -> list[str]:
+        available = {}
+        for value in profile_names:
+            name = self._clean_name(value)
+            if name and name.casefold() != UNKNOWN_CONTENT_PROVIDER.casefold():
+                available.setdefault(name.casefold(), name)
+
+        ordered = []
+        seen = set()
+        for recent_name in self.recent_providers:
+            key = recent_name.casefold()
+            if key in seen:
+                continue
+            ordered.append(available.pop(key, recent_name))
+            seen.add(key)
+
+        remaining = sorted(available.values(), key=str.casefold)
+        return [*ordered, UNKNOWN_CONTENT_PROVIDER, *remaining]
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            prefix="content-provider-history-",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(
+                    {
+                        "recent_providers": self.recent_providers,
+                        "last_selected": self.last_selected,
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
