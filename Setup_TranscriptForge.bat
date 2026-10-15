@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ========================================
-echo TranscriptForge setup
+echo TranscriptForge guided setup
 echo ========================================
 echo.
 
@@ -40,58 +40,41 @@ echo Checking pip...
 %PYTHON% -m pip --version >nul 2>&1
 if errorlevel 1 (
     echo pip is missing. Bootstrapping pip...
-    %PYTHON% -m ensurepip --upgrade --user
+    %PYTHON% -c "import sys; raise SystemExit(0 if sys.prefix == sys.base_prefix else 1)" >nul 2>&1
+    if errorlevel 1 (
+        %PYTHON% -m ensurepip --upgrade
+    ) else (
+        %PYTHON% -m ensurepip --upgrade --user
+    )
     if errorlevel 1 goto :pip_failed
 )
 
-echo Updating pip for this user...
-%PYTHON% -m pip install --user --upgrade pip
-if errorlevel 1 goto :pip_failed
+%PYTHON% -c "import transcriptforge.setup_wizard" >nul 2>&1
+if errorlevel 1 goto :wizard_failed
 
-echo Installing TranscriptForge dependencies without using the local pip cache...
-%PYTHON% -m pip install --user --no-cache-dir -r requirements.txt
-if errorlevel 1 goto :dependency_failed
+set "WIZARD_ARGS="
+if /i "%~1"=="all" set "WIZARD_ARGS=--all-models"
+set "PYTHON_EXE="
+set "PYTHONW_EXE="
+for /f "delims=" %%I in ('%PYTHON% -c "import sys; print(sys.executable)"') do set "PYTHON_EXE=%%I"
+if not defined PYTHON_EXE goto :python_version_failed
+for %%I in ("%PYTHON_EXE%") do set "PYTHONW_EXE=%%~dpIpythonw.exe"
 
-echo Verifying installed packages and bundled FFmpeg...
-%PYTHON% -c "import whisper, torch, numpy, imageio_ffmpeg, resemblyzer, soundcard; print('Whisper:', whisper.__version__); print('Torch:', torch.__version__); print('NumPy:', numpy.__version__); print('FFmpeg:', imageio_ffmpeg.get_ffmpeg_exe()); print('Speaker encoder package: ready'); print('System audio capture package: ready')"
-if errorlevel 1 goto :verification_failed
+echo Opening the guided setup wizard...
+if exist "%PYTHONW_EXE%" (
+    start "TranscriptForge Setup" "%PYTHONW_EXE%" -m transcriptforge.setup_wizard %WIZARD_ARGS%
+    if errorlevel 1 goto :wizard_failed
+    exit /b 0
+)
 
-if /i "%~1"=="all" goto :download_all
-
-call :download_model small.en
-if errorlevel 1 goto :model_failed
-goto :speaker_encoder
-
-:download_all
-call :download_model tiny.en
-if errorlevel 1 goto :model_failed
-call :download_model base.en
-if errorlevel 1 goto :model_failed
-call :download_model small.en
-if errorlevel 1 goto :model_failed
-
-:speaker_encoder
-echo Initializing the local Resemblyzer speaker encoder...
-%PYTHON% -c "from resemblyzer import VoiceEncoder; VoiceEncoder(device='cpu'); print('Speaker encoder model: ready')"
-if errorlevel 1 goto :speaker_failed
-
-echo.
-echo ========================================
-echo Setup completed successfully.
-echo You can now double-click Run_TranscriptForge.bat.
-echo ========================================
-pause
+%PYTHON% -m transcriptforge.setup_wizard %WIZARD_ARGS%
+if errorlevel 1 goto :wizard_failed
 exit /b 0
-
-:download_model
-echo Checking Whisper model %~1...
-%PYTHON% -m transcriptforge.cli models download %~1
-exit /b %errorlevel%
 
 :python_missing
 echo.
 echo ERROR: Python 3.11 or newer was not found, and winget could not install it.
-echo Install Python through your organization's approved software channel, then run this file again.
+echo Install Python through your organization's approved software channel, including Tkinter and the Python Launcher.
 goto :failed
 
 :python_install_failed
@@ -101,7 +84,7 @@ goto :failed
 
 :python_version_failed
 echo.
-echo ERROR: Python 3.11 or newer is required.
+echo ERROR: Python 3.11 or newer could not be started.
 goto :failed
 
 :tkinter_failed
@@ -111,33 +94,16 @@ goto :failed
 
 :pip_failed
 echo.
-echo ERROR: pip could not be installed or updated.
+echo ERROR: pip could not be installed. Ask IT to allow the approved Python installation or repair channel.
 goto :failed
 
-:dependency_failed
+:wizard_failed
 echo.
-echo ERROR: One or more Python dependencies could not be installed.
-echo Check the network, proxy, TLS, and package allow-list policy, then rerun setup.
-goto :failed
-
-:verification_failed
-echo.
-echo ERROR: Installed packages or bundled FFmpeg could not be imported successfully.
-goto :failed
-
-:model_failed
-echo.
-echo ERROR: A Whisper model download or validation failed.
-echo Check the network, proxy, TLS, and model allow-list policy, then rerun setup.
-goto :failed
-
-:speaker_failed
-echo.
-echo ERROR: The Resemblyzer speaker encoder could not be downloaded or initialized.
+echo ERROR: The TranscriptForge setup wizard could not be started.
 goto :failed
 
 :failed
 echo.
-echo Setup did not complete. No application transcription was started.
+echo Setup could not open the guided wizard. No application transcription was started.
 pause
 exit /b 1

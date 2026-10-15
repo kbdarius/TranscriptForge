@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.1.1"
+  version: "1.2.0"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-10-05"
+  last_updated: "2026-10-15"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-10-05 from the working tree at application version 0.26.1; includes recent-provider memory and ordering in the Add content dialog, alongside the previously implemented filename, meeting-selection, and live playback workflows."
+    value: "Reviewed 2026-10-15 from the working tree at application version 0.27.0; includes the staged Windows setup wizard, partial dependency installation, package import checks, and IT support reporting alongside existing transcription and recording workflows."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.26.1; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.27.0; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -28,7 +28,7 @@ scope:
     - "Identify authoritative implementation, documentation, workflows, local data boundaries, and known limitations."
   in_scope:
     - "Tracked application source, tests, setup and scheduling scripts, and project documentation."
-    - "Current user-facing transcription, meeting-aware speaker review, live playback recording, configuration, and scheduled-scan workflows."
+    - "Current user-facing transcription, guided Windows setup, dependency installation, meeting-aware speaker review, live playback recording, configuration, and scheduled-scan workflows."
   out_of_scope:
     - "The contents of user recordings, transcripts, voice profiles, model files, temporary audio, or private configuration packages."
     - "Live Outlook calendar contents and machine-specific local settings."
@@ -65,6 +65,26 @@ project_components:
     constraints:
       - "The application is Windows-first and uses the standard-library Tkinter UI."
       - "The window title reads its version from transcriptforge/version.py."
+
+  - name: "Guided Windows setup"
+    path: "transcriptforge/setup_wizard.py"
+    purpose: "Checks setup prerequisites, shows required and optional packages, installs packages and selected models independently in the background, and creates IT support reports."
+    critical: true
+    authoritative_sources:
+      - "transcriptforge/setup_wizard.py"
+      - "Setup_TranscriptForge.bat"
+      - "requirements.txt"
+      - "DOC/INSTALLATION.md"
+    supporting_sources:
+      - "tests/test_setup_wizard.py"
+    dependencies:
+      - "Python 3.11 or newer and Tkinter"
+      - "pip and the package/model download sources allowed by the user's network policy"
+      - "Conditional Microsoft C++ Build Tools when a native package such as webrtcvad must be compiled from source"
+    constraints:
+      - "Core transcription packages gate application launch; speaker identification, Outlook calendar access, and live system-audio recording are optional features."
+      - "An individual package or model failure does not stop attempts for other selected items."
+      - "The support report identifies the Python executable, failed items, and hosts found in installer output without including recordings, transcripts, or speaker profiles."
 
   - name: "Live playback recording"
     path: "transcriptforge/recording.py"
@@ -211,14 +231,16 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
-      purpose: "Current user-facing overview, usage, speaker workflow, CLI examples, and local-data behavior."
+      purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
     - path: "requirements.txt"
       purpose: "Direct Python runtime dependency declarations."
     - path: "Setup_TranscriptForge.bat"
-      purpose: "Windows setup, dependency checks, and model initialization."
+      purpose: "Bootstraps Python when needed, checks Tkinter and pip, and launches the guided setup wizard."
+    - path: "transcriptforge/setup_wizard.py"
+      purpose: "Staged Tkinter setup UI, dependency/model installation workers, import checks, and IT support reporting."
     - path: "Run_TranscriptForge.bat"
       purpose: "Windows launcher for the desktop application."
     - path: "transcriptforge/"
@@ -228,7 +250,7 @@ file_structure:
     - path: "transcriptforge/recording.py"
       purpose: "Background Windows playback loopback recording and PCM WAV output."
     - path: "tests/"
-      purpose: "Standard-library unittest coverage for CLI, settings, output, live recording, transcription, speaker, meeting, and provider-history behavior."
+      purpose: "Standard-library unittest coverage for application behavior and guided setup dependency/reporting behavior."
     - path: "DOC/README.md"
       purpose: "Index of project documentation."
     - path: "DOC/INSTALLATION.md"
@@ -249,6 +271,8 @@ source_of_truth:
       supports: "Automated behavior exercised by the unit test suite."
     - path: "transcriptforge/version.py"
       supports: "Single source of truth for the application version."
+    - path: "transcriptforge/setup_wizard.py"
+      supports: "Guided Windows setup stages, dependency handling, background installs, and support reports."
     - path: "requirements.txt"
       supports: "Direct Python runtime dependencies."
     - path: "AGENTS.md"
@@ -260,7 +284,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -273,6 +297,25 @@ source_of_truth:
     - "DOC/SPEAKER_RECOGNITION_FEASIBILITY_PLAN.md: proposed work and acceptance criteria, not implemented behavior."
 
 workflows:
+  - name: "Guided Windows setup"
+    trigger: "The user runs Setup_TranscriptForge.bat on a Windows PC."
+    inputs:
+      - "Python 3.11 or newer, Tkinter, and pip; Python installation is attempted through winget when needed."
+      - "Direct package declarations in requirements.txt and the user's network/package-source policy."
+      - "Optional Whisper model and Resemblyzer encoder downloads."
+    steps:
+      - "Check Python, Tkinter, pip, and whether Microsoft C++ Build Tools are available."
+      - "Show required core packages separately from optional speaker, Outlook, and live-recording packages."
+      - "Install each missing direct package in a worker thread; continue to other selected packages after an install failure."
+      - "Verify imports for installed packages and download selected Whisper models and the optional speaker encoder, continuing after individual failures."
+      - "Show setup status and allow the user to copy or save an IT report with the executable path, failed items, and detected download hosts."
+    outputs:
+      - "A partial or complete local Python setup, selected cached models, per-item status, and an optional IT support report."
+    failure_handling:
+      - "A failed required package prevents launching the app; a failed optional package only disables its associated feature."
+      - "Network failures include the requesting Python executable and hosts found in pip or model-download output."
+      - "A webrtcvad source-build error identifies the conditional MSVC C++ Build Tools requirement separately from firewall errors."
+
   - name: "Manual GUI transcription"
     trigger: "The user launches the application directly."
     inputs:
@@ -287,7 +330,7 @@ workflows:
       - "A Markdown transcript and updated local histories or profiles as applicable."
     failure_handling:
       - "Whisper transcription requires an already cached model; use the GUI Download model action or the CLI model download command."
-      - "Use Setup_TranscriptForge.bat to install or verify required packages and model files."
+      - "Use Setup_TranscriptForge.bat to open the guided setup wizard when packages or model files need installation."
 
   - name: "Append content to a transcript"
     trigger: "The user selects Add content after a transcription completes."
@@ -348,7 +391,7 @@ workflows:
     outputs:
       - "A GUI transcription job and an updated local recording-history ledger."
     failure_handling:
-      - "The setup script reports missing Python or task-registration errors."
+      - "The setup wizard reports missing Python packages and setup download failures; task registration errors are reported by the task-installation script."
       - "Deleting a recording is a user-confirmed file operation and cannot be undone by TranscriptForge."
 
   - name: "Meeting-aware speaker review"
@@ -424,8 +467,12 @@ external_dependencies:
     evidence: "Install_TranscriptForgeTask.ps1"
   - name: "Internet access during setup"
     type: "service"
-    purpose: "May be needed to install Python packages and download Whisper or speaker-encoder model files; normal transcription runs locally."
+    purpose: "May be needed to install Python packages and download Whisper or speaker-encoder model files; the wizard reports the Python executable and hosts seen in failures; normal transcription runs locally."
     evidence: "DOC/INSTALLATION.md"
+  - name: "Microsoft C++ Build Tools"
+    type: "other"
+    purpose: "Conditionally required to compile native packages such as webrtcvad when pip cannot use a compatible wheel."
+    evidence: "transcriptforge/setup_wizard.py and DOC/INSTALLATION.md"
 
 constraints_and_known_issues:
   - description: "Whisper transcription uses a model already present in the local cache; model download is a separate action."
@@ -574,6 +621,15 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "Source review and automated tests for application version 0.26.1."
+  - date: "2026-10-15"
+    description: "Added a staged Windows setup wizard with per-package background installation, independent model downloads, optional-feature handling, import checks, and an IT support report."
+    affected_areas:
+      - "Setup_TranscriptForge.bat"
+      - "transcriptforge/setup_wizard.py"
+      - "tests/test_setup_wizard.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "Source review and automated tests for application version 0.27.0."
 
 ai_navigation:
   bootstrap_sequence:
@@ -584,7 +640,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.1.1.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -653,8 +709,10 @@ ai_navigation:
       start_with:
         - "requirements.txt"
         - "Setup_TranscriptForge.bat"
+        - "transcriptforge/setup_wizard.py"
         - "DOC/INSTALLATION.md"
       then_check:
+        - "tests/test_setup_wizard.py"
         - "Run_TranscriptForge.bat"
         - "transcriptforge/version.py"
         - "AGENTS.md"
@@ -670,7 +728,7 @@ ai_navigation:
 code_profile:
   languages_and_toolchains:
     - "Python 3.11 or newer is specified by the Windows installation guide."
-    - "Windows batch and PowerShell scripts support installation, launch, and optional scheduled scanning."
+    - "A Tkinter setup wizard and Windows batch/PowerShell scripts support installation, launch, and optional scheduled scanning."
     - "Tkinter is the desktop UI toolkit; the test suite uses Python unittest."
   architecture:
     - "A Tkinter desktop GUI and automation-oriented CLI call shared local processing and persistence modules."
@@ -681,7 +739,8 @@ code_profile:
     - "py -3 -m transcriptforge launches the GUI or handles the scheduled-scan switch."
     - "py -3 -m transcriptforge.cli invokes command-line transcription and management commands."
     - "Run_TranscriptForge.bat launches the desktop application on Windows."
-    - "Setup_TranscriptForge.bat installs dependencies and initializes model files."
+    - "Setup_TranscriptForge.bat bootstraps Python when needed and opens transcriptforge/setup_wizard.py."
+    - "The setup wizard installs packages and selected model files in the background and reports partial failures."
     - "Install_TranscriptForgeTask.ps1 registers the optional recurring Windows Task Scheduler job."
   interfaces:
     - "Local input media extensions are defined in transcriptforge/media.py: WAV, MP3, M4A, AAC, MP4, MOV, and MKV."
@@ -715,7 +774,9 @@ code_profile:
     - "The app has a machine-specific default recordings-folder path; verify it before relying on it on another PC."
     - "The GUI output filename field replaces slash and other Windows-invalid filename characters with hyphens; directory paths are not changed."
   build_test_release:
-    - "Setup_TranscriptForge.bat checks Python 3.11+, installs requirements including SoundCard, and initializes Whisper and Resemblyzer model files."
+    - "Setup_TranscriptForge.bat checks Python, Tkinter, and pip before opening the guided setup wizard."
+    - "The setup wizard installs each missing direct requirement independently, verifies imports, and continues model/encoder downloads after individual failures."
+    - "Microsoft C++ Build Tools are a conditional requirement for native source builds such as webrtcvad."
     - "Run py -3 -m compileall -q transcriptforge tests after code changes."
     - "Run py -3 -m unittest discover -s tests -v after code changes."
     - "Update README.md when user-facing behavior, dependencies, storage, or workflows change."
