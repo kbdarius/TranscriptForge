@@ -1,5 +1,5 @@
 param(
-    [string]$RecordingFolder = "C:\Users\dariusk\OneDrive - stryten.com\Recordings",
+    [string]$RecordingFolder,
     [int]$IntervalMinutes = 15
 )
 
@@ -14,12 +14,21 @@ if (-not (Test-Path -LiteralPath $projectRoot)) {
     throw "TranscriptForge folder was not found: $projectRoot"
 }
 
-$action = New-ScheduledTaskAction -Execute $python -Argument "-3 -m transcriptforge --scheduled-scan --folder `"$RecordingFolder`"" -WorkingDirectory $projectRoot
+$arguments = "-3 -m transcriptforge --scheduled-scan"
+if (-not [string]::IsNullOrWhiteSpace($RecordingFolder)) {
+    $arguments += " --folder `"$RecordingFolder`""
+}
+$action = New-ScheduledTaskAction -Execute $python -Argument $arguments -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 Write-Host "Created: $taskName"
-Write-Host "Folder:  $RecordingFolder"
+if ([string]::IsNullOrWhiteSpace($RecordingFolder)) {
+    Write-Host "Folder:  reads the saved TranscriptForge recording-folder setting at each scan"
+} else {
+    Write-Host "Folder:  saved setting takes precedence; fallback argument is $RecordingFolder"
+}
+Write-Host "Project: $projectRoot"
 Write-Host "Checks:  every $IntervalMinutes minutes while you are logged in"
 Write-Host "Manage it in Windows Task Scheduler under Task Scheduler Library."

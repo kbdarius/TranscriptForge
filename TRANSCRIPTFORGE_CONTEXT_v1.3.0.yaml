@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.2.0"
+  version: "1.3.0"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-10-15"
+  last_updated: "2026-10-16"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-10-15 from the working tree at application version 0.27.0; includes the staged Windows setup wizard, partial dependency installation, package import checks, and IT support reporting alongside existing transcription and recording workflows."
+    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.1; includes setting-driven scheduled recording scans, relocation-safe task installation guidance, and the guided setup wizard alongside existing transcription and recording workflows."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.27.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.27.1; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -231,7 +231,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -284,7 +284,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -386,11 +386,14 @@ workflows:
       - "Local recording history and supported media files."
     steps:
       - "Install or remove the task with Install_TranscriptForgeTask.ps1 or Remove_TranscriptForgeTask.ps1."
+      - "Resolve the saved per-PC recording-folder setting on every scan; it takes precedence over a legacy task folder argument."
+      - "Register the task with the current project root as its working directory; rerun the installer after moving the project."
       - "transcriptforge/scheduler.py selects an eligible recording older than its minimum age and launches the GUI."
       - "The user can transcribe, ignore, or delete the selected recording; history supports later requeue of ignored or pending recordings."
     outputs:
       - "A GUI transcription job and an updated local recording-history ledger."
     failure_handling:
+      - "A missing or unavailable saved folder opens the GUI folder picker instead of silently scanning another location."
       - "The setup wizard reports missing Python packages and setup download failures; task registration errors are reported by the task-installation script."
       - "Deleting a recording is a user-confirmed file operation and cannot be undone by TranscriptForge."
 
@@ -536,15 +539,19 @@ constraints_and_known_issues:
       - "README.md"
       - "DOC/INSTALLATION.md"
       - ".gitignore"
-  - description: "The default recording-folder path in the GUI is machine-specific and may not exist on another PC."
+  - description: "The scheduled recording folder is saved per PC, while the task working directory is captured at registration and must be refreshed after moving the project."
     status: "confirmed"
     affected_areas:
       - "transcriptforge/app.py"
+      - "transcriptforge/scheduler.py"
+      - "Install_TranscriptForgeTask.ps1"
       - "transcriptforge/settings.py"
-    workaround: "Choose a valid local recording folder in the GUI; saved folder settings are per PC."
+    workaround: "Choose a valid local recording folder; rerun Install_TranscriptForgeTask.ps1 from the current project root after moving TranscriptForge."
     evidence:
       - "README.md"
       - "transcriptforge/app.py"
+      - "transcriptforge/scheduler.py"
+      - "Install_TranscriptForgeTask.ps1"
       - "transcriptforge/settings.py"
   - description: "Live recording captures audio from the default Windows playback endpoint, not the local microphone, and depends on an available WASAPI loopback device."
     status: "confirmed"
@@ -630,6 +637,17 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "Source review and automated tests for application version 0.27.0."
+  - date: "2026-10-16"
+    description: "Made the saved per-PC recording folder authoritative for scheduled scans, removed the hardcoded user-specific folder, and documented task reinstallation after moving the project."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/scheduler.py"
+      - "transcriptforge/__main__.py"
+      - "Install_TranscriptForgeTask.ps1"
+      - "tests/test_scheduler.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "Current Task Scheduler configuration, a read-only eligibility check, and automated tests for application version 0.27.1."
 
 ai_navigation:
   bootstrap_sequence:
@@ -640,7 +658,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.2.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -763,6 +781,7 @@ code_profile:
     - "transcriptforge/speakers.py implements voice analysis, profile matching, clustering, review, and profile learning."
     - "transcriptforge/outlook_calendar.py:meetings_on reads appointments from the local default calendar."
     - "transcriptforge/recording.py:PlaybackAudioRecorder captures playback and finalizes PCM WAV output."
+    - "transcriptforge/scheduler.py:resolve_recording_folder reads the saved per-PC recording folder before considering a legacy task argument."
     - "transcriptforge/settings.py:ContentProviderHistory persists the last Add content provider and orders recent provider names."
     - "transcriptforge/output.py:render_markdown formats transcript output and atomic_write saves it."
     - "transcriptforge/output.py:sanitize_output_filename replaces Windows-invalid filename characters before GUI output paths are built."
@@ -771,7 +790,8 @@ code_profile:
     - "requirements.txt declares direct runtime dependencies."
     - "User settings are local to each PC; portable configuration intentionally excludes machine-specific paths and histories."
     - "content-provider-history.json stores the local last-used Add content provider and ten-name recency list; configuration transfer excludes it."
-    - "The app has a machine-specific default recordings-folder path; verify it before relying on it on another PC."
+    - "Scheduled scans read recording-folder.json on every run; no user-specific drive or recording path is hardcoded."
+    - "The scheduled task's working directory is captured from the project location at registration and must be updated after moving the project."
     - "The GUI output filename field replaces slash and other Windows-invalid filename characters with hyphens; directory paths are not changed."
   build_test_release:
     - "Setup_TranscriptForge.bat checks Python, Tkinter, and pip before opening the guided setup wizard."

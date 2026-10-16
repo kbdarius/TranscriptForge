@@ -28,7 +28,6 @@ from .speaker_names import commit_speaker_name_value, similar_speaker_names, spe
 from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
 from .version import __version__
 
-DEFAULT_RECORDINGS_FOLDER = Path(r"C:\Users\dariusk\OneDrive - stryten.com\Recordings")
 NO_MEETING_SELECTION = "No meeting selected - use current workflow"
 
 class App(tk.Tk):
@@ -403,22 +402,20 @@ class App(tk.Tk):
         table.bind("<<TreeviewSelect>>", show_selection)
         buttons = ttk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=(0, 10)); ttk.Button(buttons, text="Open transcript", command=open_selected_transcript).pack(side="left"); ttk.Button(buttons, text="Open folder", command=open_selected_folder).pack(side="left", padx=6); ttk.Button(buttons, text="Unignore / requeue", command=unignore_selected).pack(side="left", padx=6); ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side="right")
     def _browse_input(self):
-        configured = Path(self.recording_settings.folder) if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER
-        initialdir = configured if configured.is_dir() else Path.home()
+        configured = Path(self.recording_settings.folder).expanduser() if self.recording_settings.folder else None
+        initialdir = configured if configured and configured.is_dir() else Path.home()
         path = filedialog.askopenfilename(title=self._window_title("Choose input file"), initialdir=str(initialdir), filetypes=[("Media", " ".join(f"*{x}" for x in SUPPORTED_EXTENSIONS)), ("All files", "*.*")])
         if path: self.input_var.set(path); p = Path(path); self.folder_var.set(str(p.parent)); self.filename_var.set(sanitize_output_filename(p.stem + ".md")); self.transcribe_button.configure(state="normal")
     def _validate_saved_recording_folder(self):
-        configured = Path(self.recording_settings.folder) if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER
-        if configured.is_dir():
-            if not self.recording_settings.folder:
-                self.recording_settings.set(configured)
+        configured = Path(self.recording_settings.folder).expanduser() if self.recording_settings.folder else None
+        if configured and configured.is_dir():
             return
         self._ask_for_recording_folder(configured)
     def _startup(self, initial_input, auto_start, prompt_recording_folder, recording_folder):
         if recording_folder:
             self.recording_settings.set(recording_folder)
-        if prompt_recording_folder or not (Path(self.recording_settings.folder).is_dir() if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER.is_dir()):
-            configured = Path(self.recording_settings.folder) if self.recording_settings.folder else DEFAULT_RECORDINGS_FOLDER
+        configured = Path(self.recording_settings.folder).expanduser() if self.recording_settings.folder else None
+        if prompt_recording_folder or configured is None or not configured.is_dir():
             self._ask_for_recording_folder(configured)
         if initial_input:
             source = Path(initial_input)
@@ -637,7 +634,7 @@ class App(tk.Tk):
                 f"Could not load Outlook meetings: {error}. You can still transcribe without one."
             )
         self._write_log(f"Could not read Outlook meetings for the recording date: {error}")
-    def _ask_for_recording_folder(self, missing: Path):
+    def _ask_for_recording_folder(self, missing: Path | None):
         message = "TranscriptForge could not find the saved recording folder.\n\n"
         if missing:
             message += f"Saved location:\n{missing}\n\n"

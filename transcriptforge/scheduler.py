@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .media import SUPPORTED_EXTENSIONS
-from .settings import RecordingHistory
+from .settings import RecordingFolderSettings, RecordingHistory
 
 
 def find_new_recording(folder: Path, history: RecordingHistory | None = None, minimum_age_minutes: int = 2) -> Path | None:
@@ -29,10 +29,18 @@ def find_new_recording(folder: Path, history: RecordingHistory | None = None, mi
     return min(candidates, key=lambda item: item.stat().st_mtime) if candidates else None
 
 
-def scan_and_launch(folder: Path, python_executable: str | None = None) -> int:
+def resolve_recording_folder(folder: Path | None = None) -> Path | None:
+    configured_folder = RecordingFolderSettings().folder
+    if configured_folder:
+        return Path(configured_folder).expanduser()
+    return folder.expanduser() if folder is not None else None
+
+
+def scan_and_launch(folder: Path | None = None, python_executable: str | None = None) -> int:
     history = RecordingHistory()
-    if not folder.is_dir():
-        _launch_gui(["--prompt-recording-folder"] , python_executable)
+    folder = resolve_recording_folder(folder)
+    if folder is None or not folder.is_dir():
+        _launch_gui(["--prompt-recording-folder"], python_executable)
         return 0
     source = find_new_recording(folder, history)
     if source is None:

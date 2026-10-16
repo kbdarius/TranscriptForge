@@ -19,7 +19,7 @@ py -3 -m transcriptforge
 
 The first use of a model requires a download. Models are cached under `%LOCALAPPDATA%\LocalAudioTranscriber\whisper-models`. The GUI's **Download model** action is explicit; transcription only uses an already cached model.
 
-The application remembers the recording folder for the current PC in `%LOCALAPPDATA%\LocalAudioTranscriber\recording-folder.json`. It starts with `C:\Users\dariusk\OneDrive - stryten.com\Recordings` when that default exists. If a saved folder is unavailable on another PC, TranscriptForge asks the user to choose a replacement folder at startup and stores that choice locally; no machine-specific path is shared with speaker profiles or the application code.
+The application remembers the scheduled-recording folder for the current PC in `%LOCALAPPDATA%\LocalAudioTranscriber\recording-folder.json`. No user-specific drive or folder is hardcoded. If no valid folder has been saved, TranscriptForge asks the user to choose one at startup. Scheduled scans read this setting each time, so changing the saved folder takes effect on the next scan.
 
 Select **Record system audio** to capture playback from the default Windows output device while a Teams, Zoom, or other meeting is in progress. The **Stop & transcribe** action finalizes a WAV recording and starts the normal transcription and speaker-review workflow automatically. Choose the destination in **Setup > Live system audio recording**; the folder is stored locally in `live-recording-folder.json`. This captures system playback only, not the local microphone, so include a separate microphone recording if your own voice must be transcribed. Recordings remain local and are not uploaded.
 
@@ -85,7 +85,7 @@ py -3 -m transcriptforge.cli profiles quarantine-source "C:\path\meeting.mp4" --
 
 ## Scheduled recording scan
 
-`Install_TranscriptForgeTask.ps1` creates a Windows Task Scheduler task named **TranscriptForge - Check Recordings**. It checks the configured folder every 15 minutes while the user is logged in, exits quickly when there is no new stable media, and opens the normal GUI only when a recording needs review/transcription. A pending recording is not launched again while the GUI is handling it. The scanner uses the newest successful recording as a baseline, so older files are not unexpectedly picked up. It does not keep a watcher process or audio-processing process running between checks.
+`Install_TranscriptForgeTask.ps1` creates a Windows Task Scheduler task named **TranscriptForge - Check Recordings**. It checks the folder saved in the current PC's `recording-folder.json` setting every 15 minutes while the user is logged in, exits quickly when there is no new stable media, and opens the normal GUI only when a recording needs review/transcription. A pending recording is not launched again while the GUI is handling it. The scanner uses the newest successful recording as a baseline, so older files are not unexpectedly picked up. It does not keep a watcher process or audio-processing process running between checks.
 
 Run the installer from PowerShell in the project root:
 
@@ -94,7 +94,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\Install_TranscriptForgeTask.ps1
 ```
 
-To use a different PC's recording folder:
+The task installer uses the current project directory as the task's working directory. Re-run it after moving TranscriptForge to another drive or folder. Changing the saved recording-folder setting does not require reinstalling the task.
+
+`-RecordingFolder` is an optional fallback for older or manual setups that do not yet have a saved folder. A saved setting takes precedence over this argument:
 
 ```powershell
 .\Install_TranscriptForgeTask.ps1 -RecordingFolder "D:\Recordings"
@@ -102,13 +104,13 @@ To use a different PC's recording folder:
 
 The scheduled task calls the same application entry point directly. When it finds a recording, the GUI decision dialog appears before speaker labeling or transcription. The scanner marks the item `pending` before launching the GUI, so repeated 15-minute checks do not open duplicate windows while the user is working. Choosing Ignore changes the entry to `ignored`; choosing Delete removes the source after confirmation. A pending, ignored, or deleted entry is skipped until it is restored from History.
 
-To test one scan manually without installing a task:
+To test one scan manually without installing a task, use the saved folder:
 
 ```powershell
-py -3 -m transcriptforge --scheduled-scan --folder "C:\path\to\recordings"
+py -3 -m transcriptforge --scheduled-scan
 ```
 
-That command exits when there is no eligible recording. When it finds one, it launches the normal GUI with speaker review enabled; the user remains in control before transcription begins.
+That command exits when there is no eligible recording. When it finds one, it launches the normal GUI with speaker review enabled; the user remains in control before transcription begins. The optional `--folder` argument is only used when no saved recording-folder setting exists.
 
 If that folder later does not exist, the launched GUI asks the user to choose a replacement and saves it in that PC's local settings. The scan ledger is `%LOCALAPPDATA%\LocalAudioTranscriber\recording-history.json`; it records the original path, status, final media path, and transcript path so completed, ignored, and deleted recordings are not processed again. Deleted audio cannot be recovered by TranscriptForge. To remove the task, run `Remove_TranscriptForgeTask.ps1`, or open **Task Scheduler** (`taskschd.msc`), expand **Task Scheduler Library**, select **TranscriptForge - Check Recordings**, and choose **Disable** or **Delete**.
 
