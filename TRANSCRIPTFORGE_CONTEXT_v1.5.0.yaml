@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.4.0"
+  version: "1.5.0"
   status: "current"
   created_date: "2026-09-25"
   last_updated: "2026-10-16"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.2; includes setting-driven scheduled recording scans through windowless Python, relocation-safe task installation guidance, and the guided setup wizard alongside existing transcription and recording workflows."
+    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.3; includes setting-driven scheduled scans, windowless task execution, and Outlook Classic COM access through pywin32 with a hidden PowerShell fallback."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.27.2; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.27.3; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -145,7 +145,7 @@ project_components:
       - "tests/test_outlook_calendar.py"
     dependencies:
       - "Resemblyzer"
-      - "Optional Outlook Classic COM access through pywin32"
+      - "Optional Outlook Classic COM access through pywin32, with a hidden PowerShell COM fallback"
     constraints:
       - "Speaker profiles contain sensitive voice embeddings and names."
       - "Meeting invitee names narrow profile matching but do not identify an unprofiled voice by themselves."
@@ -233,7 +233,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -286,7 +286,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -418,7 +418,7 @@ workflows:
       - "Meeting-specific speaker suggestions and user-confirmed profile/name decisions."
     failure_handling:
       - "Unmatched guests and uncertain acoustic groups remain reviewable rather than being forced to a roster name."
-      - "Outlook integration is optional and depends on Outlook Classic and pywin32 on the local PC."
+      - "Outlook integration is optional and uses only Outlook Classic COM; Python COM activation failures fall back to local Windows PowerShell COM."
 
   - name: "Portable configuration transfer"
     trigger: "The user selects Export configuration or Import configuration."
@@ -457,7 +457,7 @@ external_dependencies:
     evidence: "requirements.txt"
   - name: "pywin32"
     type: "library"
-    purpose: "Enables optional local Outlook Classic COM calendar access."
+    purpose: "Provides the preferred Python client for Outlook Classic COM; Windows PowerShell COM is used as a hidden fallback if activation fails."
     evidence: "requirements.txt"
   - name: "SoundCard"
     type: "library"
@@ -465,11 +465,11 @@ external_dependencies:
     evidence: "requirements.txt"
   - name: "Outlook Classic"
     type: "vendor"
-    purpose: "Provides appointments from the local default calendar; the integration does not use Microsoft Graph."
+    purpose: "Provides appointments from the local default calendar through Outlook.Application COM; the integration does not use New Outlook or Microsoft Graph."
     evidence: "transcriptforge/outlook_calendar.py"
   - name: "Windows Task Scheduler and PowerShell"
     type: "other"
-    purpose: "Register the optional recurring scan using windowless Python; the GUI appears only when a recording needs a user decision."
+    purpose: "Register the optional recurring scan and provide a hidden local COM fallback for Outlook Classic; the GUI appears only when a recording needs a user decision."
     evidence: "Install_TranscriptForgeTask.ps1"
   - name: "Internet access during setup"
     type: "service"
@@ -491,11 +491,11 @@ constraints_and_known_issues:
     evidence:
       - "README.md"
       - "DOC/INSTALLATION.md"
-  - description: "Outlook meeting lookup uses the installed Outlook Classic COM interface and the default local calendar; it is not an Outlook web or Microsoft Graph integration."
+  - description: "Outlook meeting lookup uses only the installed Outlook Classic COM interface and default local calendar; pywin32 activation failures use hidden Windows PowerShell COM, not New Outlook or Microsoft Graph."
     status: "confirmed"
     affected_areas:
       - "transcriptforge/outlook_calendar.py"
-    workaround: "Use the no-meeting option or existing speaker preferences when local Outlook Classic is unavailable."
+    workaround: "Keep Outlook Classic installed and configured; if Python COM activation fails, the app tries its hidden Windows PowerShell COM fallback. Use the no-meeting option when Outlook Classic is unavailable."
     evidence:
       - "transcriptforge/outlook_calendar.py"
       - "tests/test_outlook_calendar.py"
@@ -658,6 +658,15 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "PowerShell parser validation and Task Scheduler action verification for application version 0.27.2."
+  - date: "2026-10-16"
+    description: "Added a hidden Windows PowerShell fallback for Outlook Classic COM when pywin32 cannot attach to the local Outlook server."
+    affected_areas:
+      - "transcriptforge/outlook_calendar.py"
+      - "transcriptforge/setup_wizard.py"
+      - "tests/test_outlook_calendar.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "A count-only live Outlook Classic COM fallback check and automated tests for application version 0.27.3."
 
 ai_navigation:
   bootstrap_sequence:
@@ -668,7 +677,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -774,7 +783,7 @@ code_profile:
     - "Local input media extensions are defined in transcriptforge/media.py: WAV, MP3, M4A, AAC, MP4, MOV, and MKV."
     - "The main transcript interface is a timestamped Markdown file."
     - "CLI speaker review uses a JSON file and an explicit rerun handoff."
-    - "Optional calendar data is read through the local Outlook Classic COM interface."
+    - "Optional calendar data is read only through the local Outlook Classic COM interface; no New Outlook or Microsoft Graph access is used."
     - "Live recording captures Windows playback through SoundCard WASAPI loopback; local microphone audio is not included."
   data_models_and_persistence:
     - "transcriptforge/models.py defines transcript segments, processing statistics, results, and suspect ranges."
@@ -789,7 +798,7 @@ code_profile:
     - "transcriptforge/transcription.py:transcribe_samples runs local Whisper in windows and retries suspect ranges."
     - "transcriptforge/quality.py identifies weak or suspicious repeated output ranges."
     - "transcriptforge/speakers.py implements voice analysis, profile matching, clustering, review, and profile learning."
-    - "transcriptforge/outlook_calendar.py:meetings_on reads appointments from the local default calendar."
+    - "transcriptforge/outlook_calendar.py:meetings_on reads the local Outlook Classic calendar through pywin32 or a hidden PowerShell COM fallback."
     - "transcriptforge/recording.py:PlaybackAudioRecorder captures playback and finalizes PCM WAV output."
     - "transcriptforge/scheduler.py:resolve_recording_folder reads the saved per-PC recording folder before considering a legacy task argument."
     - "transcriptforge/settings.py:ContentProviderHistory persists the last Add content provider and orders recent provider names."

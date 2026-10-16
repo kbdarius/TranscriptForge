@@ -37,7 +37,7 @@ _PACKAGE_DETAILS = {
     "numpy": ("Audio samples and numerical processing", True, "numpy"),
     "imageio-ffmpeg": ("Bundled FFmpeg for media decoding", True, "imageio_ffmpeg"),
     "resemblyzer": ("Optional local speaker identification", False, "resemblyzer"),
-    "pywin32": ("Optional Outlook Classic calendar integration", False, "win32com"),
+    "pywin32": ("Optional Python COM client for Outlook Classic; PowerShell fallback is available", False, "win32com"),
     "soundcard": ("Optional live system-audio recording", False, "soundcard"),
 }
 

@@ -27,7 +27,7 @@ That selects `tiny.en`, `base.en`, and `small.en`, so allow additional disk spac
 - Python 3.11 or newer. The standard Windows installer should include the Python Launcher (`py`) and Tkinter.
 - `pip`, bootstrapped automatically when possible.
 - Microsoft C++ Build Tools with MSVC 14 or newer and a Windows SDK may be needed if pip has to compile a native dependency from source. In particular, `resemblyzer` depends on `webrtcvad`; if a compatible wheel is unavailable, that build requires the C++ compiler. The wizard links to the official Build Tools installer and identifies this compiler error separately from network failures.
-- PowerShell and Task Scheduler only if the optional scheduled recording scan is used; both are Windows components.
+- Windows PowerShell is used by the optional Outlook Classic COM fallback and task installer; Task Scheduler is only needed for scheduled recording scans.
 - Internet access during first setup for Python packages and model files, unless the organization provides an approved internal mirror.
 - Enough disk space for Python packages, temporary decoded audio, and the selected models. `small.en` is approximately 461 MB; installing all three supported Whisper models is roughly 680 MB before temporary audio and package space.
 
@@ -46,7 +46,7 @@ These are the direct runtime dependencies declared in `requirements.txt` and lis
 | `numpy` | Required | Audio sample arrays, RMS calculations, and embeddings |
 | `imageio-ffmpeg` | Required | Supplies a bundled FFmpeg executable |
 | `resemblyzer` | Optional | Local voice embeddings for speaker clustering and profile matching |
-| `pywin32` | Optional | Outlook Classic calendar integration |
+| `pywin32` | Optional | Python COM client for Outlook Classic; a hidden PowerShell COM fallback is used if Python activation fails |
 | `soundcard` | Optional | Windows WASAPI loopback capture for live system playback recording |
 
 No separate `ffmpeg`, `ffprobe`, or `whisper` command-line installation is required. TranscriptForge invokes the FFmpeg executable supplied by `imageio-ffmpeg` and passes decoded samples directly to Whisper.
