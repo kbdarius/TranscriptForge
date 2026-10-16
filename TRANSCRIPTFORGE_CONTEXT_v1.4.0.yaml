@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.3.0"
+  version: "1.4.0"
   status: "current"
   created_date: "2026-09-25"
   last_updated: "2026-10-16"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.1; includes setting-driven scheduled recording scans, relocation-safe task installation guidance, and the guided setup wizard alongside existing transcription and recording workflows."
+    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.2; includes setting-driven scheduled recording scans through windowless Python, relocation-safe task installation guidance, and the guided setup wizard alongside existing transcription and recording workflows."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.27.1; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.27.2; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -165,9 +165,11 @@ project_components:
       - "tests/test_cli.py"
     dependencies:
       - "Python Launcher on Windows"
+      - "Windowless Python launcher or interpreter (`pyw.exe` or `pythonw.exe`)"
       - "Windows Task Scheduler for the optional recurring scan"
     constraints:
       - "Scheduled scans use the local recording folder and local recording history."
+      - "Empty checks run without a visible console; the GUI is launched only when a recording needs a decision or the saved folder needs repair."
       - "The scan presents a user choice before transcription, ignoring, or deleting a recording."
 
   - name: "Local settings and portable configuration"
@@ -231,7 +233,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -284,7 +286,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -388,6 +390,7 @@ workflows:
       - "Install or remove the task with Install_TranscriptForgeTask.ps1 or Remove_TranscriptForgeTask.ps1."
       - "Resolve the saved per-PC recording-folder setting on every scan; it takes precedence over a legacy task folder argument."
       - "Register the task with the current project root as its working directory; rerun the installer after moving the project."
+      - "Run the scheduled scan with pyw.exe or pythonw.exe so empty checks do not flash a console window."
       - "transcriptforge/scheduler.py selects an eligible recording older than its minimum age and launches the GUI."
       - "The user can transcribe, ignore, or delete the selected recording; history supports later requeue of ignored or pending recordings."
     outputs:
@@ -466,7 +469,7 @@ external_dependencies:
     evidence: "transcriptforge/outlook_calendar.py"
   - name: "Windows Task Scheduler and PowerShell"
     type: "other"
-    purpose: "Support the optional recurring scan of a local recording folder."
+    purpose: "Register the optional recurring scan using windowless Python; the GUI appears only when a recording needs a user decision."
     evidence: "Install_TranscriptForgeTask.ps1"
   - name: "Internet access during setup"
     type: "service"
@@ -648,6 +651,13 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "Current Task Scheduler configuration, a read-only eligibility check, and automated tests for application version 0.27.1."
+  - date: "2026-10-16"
+    description: "Configured scheduled scans to use windowless Python and documented that only actionable recordings open the GUI."
+    affected_areas:
+      - "Install_TranscriptForgeTask.ps1"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    evidence: "PowerShell parser validation and Task Scheduler action verification for application version 0.27.2."
 
 ai_navigation:
   bootstrap_sequence:
@@ -658,7 +668,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.3.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.4.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -759,7 +769,7 @@ code_profile:
     - "Run_TranscriptForge.bat launches the desktop application on Windows."
     - "Setup_TranscriptForge.bat bootstraps Python when needed and opens transcriptforge/setup_wizard.py."
     - "The setup wizard installs packages and selected model files in the background and reports partial failures."
-    - "Install_TranscriptForgeTask.ps1 registers the optional recurring Windows Task Scheduler job."
+    - "Install_TranscriptForgeTask.ps1 registers the optional recurring Windows Task Scheduler job with pyw.exe or pythonw.exe to avoid visible console windows."
   interfaces:
     - "Local input media extensions are defined in transcriptforge/media.py: WAV, MP3, M4A, AAC, MP4, MOV, and MKV."
     - "The main transcript interface is a timestamped Markdown file."

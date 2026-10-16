@@ -85,7 +85,7 @@ py -3 -m transcriptforge.cli profiles quarantine-source "C:\path\meeting.mp4" --
 
 ## Scheduled recording scan
 
-`Install_TranscriptForgeTask.ps1` creates a Windows Task Scheduler task named **TranscriptForge - Check Recordings**. It checks the folder saved in the current PC's `recording-folder.json` setting every 15 minutes while the user is logged in, exits quickly when there is no new stable media, and opens the normal GUI only when a recording needs review/transcription. A pending recording is not launched again while the GUI is handling it. The scanner uses the newest successful recording as a baseline, so older files are not unexpectedly picked up. It does not keep a watcher process or audio-processing process running between checks.
+`Install_TranscriptForgeTask.ps1` creates a Windows Task Scheduler task named **TranscriptForge - Check Recordings**. It checks the folder saved in the current PC's `recording-folder.json` setting every 15 minutes while the user is logged in, exits quickly when there is no new stable media, and opens the normal GUI only when a recording needs review/transcription. The scanner runs through windowless Python (`pyw.exe` or `pythonw.exe`), so an empty check does not flash a console window or take focus. A pending recording is not launched again while the GUI is handling it. The scanner uses the newest successful recording as a baseline, so older files are not unexpectedly picked up. It does not keep a watcher process or audio-processing process running between checks.
 
 Run the installer from PowerShell in the project root:
 
