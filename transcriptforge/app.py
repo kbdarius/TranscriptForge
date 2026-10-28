@@ -194,6 +194,8 @@ class App(tk.Tk):
             # first suggestion instead of leaving the search text (for
             # example, "JO") in the field.
             combo.set(values[0])
+        combo._tf_suggestion_index = -1
+        self._hide_speaker_name_suggestions(combo)
         self._remember_speaker_name(combo, combos, names, recent_names)
         return "break"
 
@@ -972,24 +974,151 @@ class App(tk.Tk):
                     SampleRejectionStore().add(embedding, reason, note.get("1.0", "end"), str(getattr(self, "active_source", "")))
                 dialog.grab_release(); dialog.destroy(); self._write_log(f"Removed sample from {cluster.identifier}: {removed[0]:.2f}s-{removed[1]:.2f}s ({reason})"); self._render_sample_controls(parent, self.speaker_review_source, cluster)
             buttons = ttk.Frame(frame); buttons.pack(fill="x"); ttk.Button(buttons, text="Cancel", command=lambda: (dialog.grab_release(), dialog.destroy())).pack(side="right", padx=4); ttk.Button(buttons, text="Remove sample", command=confirm).pack(side="right")
-    def _update_speaker_name_suggestions(self, event, combo, names, recent_names):
+    def _update_speaker_name_suggestions(self, event, combo, names, recent_names, combos):
         if event.keysym in {"Up", "Down", "Return", "Escape", "Tab"}:
             return
         suggestions = speaker_name_suggestions(names, combo.get(), recent_names)
         combo._tf_suggestions = suggestions
         combo._tf_suggestion_index = -1
-        combo.configure(values=suggestions)
-        if suggestions:
-            combo.after_idle(lambda: combo.tk.call("ttk::combobox::Post", str(combo)))
+        self._show_speaker_name_suggestions(
+            combo, suggestions, combos, names, recent_names
+        )
+
+    def _show_speaker_name_suggestions(
+        self, combo, suggestions, combos, names, recent_names
+    ):
+        if not suggestions:
+            self._hide_speaker_name_suggestions(combo)
+            return
+
+        popup = getattr(combo, "_tf_suggestion_popup", None)
+        listbox = getattr(combo, "_tf_suggestion_listbox", None)
+        try:
+            popup_exists = popup is not None and bool(popup.winfo_exists())
+        except tk.TclError:
+            popup_exists = False
+        if not popup_exists:
+            owner = combo.winfo_toplevel()
+            popup = tk.Toplevel(owner)
+            popup.wm_overrideredirect(True)
+            popup.transient(owner)
+            listbox = tk.Listbox(
+                popup,
+                exportselection=False,
+                height=min(3, len(suggestions)),
+                takefocus=False,
+            )
+            listbox.pack(fill="both", expand=True)
+            listbox.bind(
+                "<ButtonPress-1>",
+                lambda _event, widget=combo: setattr(
+                    widget, "_tf_suggestion_click", True
+                ),
+            )
+
+            def choose_speaker_name_suggestion(event, widget=combo):
+                return self._select_speaker_name_suggestion_from_mouse(
+                    event, widget, combos, names, recent_names
+                )
+
+            listbox.bind("<ButtonRelease-1>", choose_speaker_name_suggestion)
+            listbox.bind(
+                "<Motion>",
+                lambda event, widget=combo: self._highlight_speaker_name_suggestion(
+                    event, widget
+                ),
+            )
+            combo._tf_suggestion_popup = popup
+            combo._tf_suggestion_listbox = listbox
+
+        listbox.delete(0, tk.END)
+        for suggestion in suggestions:
+            listbox.insert(tk.END, suggestion)
+        listbox.configure(height=min(3, len(suggestions)))
+        index = getattr(combo, "_tf_suggestion_index", -1)
+        listbox.selection_clear(0, tk.END)
+        if 0 <= index < len(suggestions):
+            listbox.selection_set(index)
+            listbox.activate(index)
+
+        combo.update_idletasks()
+        popup.update_idletasks()
+        width = max(combo.winfo_width(), listbox.winfo_reqwidth())
+        height = listbox.winfo_reqheight()
+        x = combo.winfo_rootx()
+        y = combo.winfo_rooty() + combo.winfo_height()
+        if y + height > combo.winfo_screenheight():
+            y = max(0, combo.winfo_rooty() - height)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.deiconify()
+        combo.focus_set()
+        popup.lift()
+
+    @staticmethod
+    def _hide_speaker_name_suggestions(combo):
+        popup = getattr(combo, "_tf_suggestion_popup", None)
+        if popup is None:
+            return
+        try:
+            if popup.winfo_exists():
+                popup.withdraw()
+        except tk.TclError:
+            return
+
+    def _highlight_speaker_name_suggestion(self, event, combo):
+        suggestions = getattr(combo, "_tf_suggestions", [])
+        listbox = getattr(combo, "_tf_suggestion_listbox", None)
+        if listbox is None:
+            return
+        index = listbox.nearest(event.y)
+        if 0 <= index < len(suggestions):
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(index)
+            listbox.activate(index)
+            combo._tf_suggestion_index = index
+
+    def _select_speaker_name_suggestion_from_mouse(
+        self, event, combo, combos, names, recent_names
+    ):
+        listbox = getattr(combo, "_tf_suggestion_listbox", None)
+        if listbox is not None:
+            index = listbox.nearest(event.y)
+            self._select_speaker_name_suggestion(
+                combo, index, combos, names, recent_names
+            )
+        combo._tf_suggestion_click = False
+        return "break"
+
+    def _select_speaker_name_suggestion(
+        self, combo, index, combos, names, recent_names
+    ):
+        suggestions = getattr(combo, "_tf_suggestions", [])
+        if not 0 <= index < len(suggestions):
+            return
+        combo.set(suggestions[index])
+        combo.icursor(tk.END)
+        combo._tf_suggestion_index = -1
+        self._hide_speaker_name_suggestions(combo)
+        combo.focus_set()
+        self._remember_speaker_name(combo, combos, names, recent_names)
+
+    def _refresh_speaker_name_suggestions(self, combo, names, recent_names, combos):
+        suggestions = speaker_name_suggestions(names, combo.get(), recent_names)
+        combo._tf_suggestions = suggestions
+        combo._tf_suggestion_index = -1
+        self._show_speaker_name_suggestions(
+            combo, suggestions, combos, names, recent_names
+        )
+        combo.focus_set()
 
     def _navigate_speaker_name_suggestions(self, event, combo, names, recent_names, combos):
         suggestions = getattr(combo, "_tf_suggestions", None)
-        if not suggestions:
+        if event.keysym in {"Up", "Down"} or not suggestions:
             suggestions = speaker_name_suggestions(names, combo.get(), recent_names)
             combo._tf_suggestions = suggestions
-            combo.configure(values=suggestions)
         if event.keysym in {"Up", "Down"}:
             if not suggestions:
+                self._hide_speaker_name_suggestions(combo)
                 return "break"
             index = getattr(combo, "_tf_suggestion_index", -1)
             if event.keysym == "Down":
@@ -997,17 +1126,19 @@ class App(tk.Tk):
             else:
                 index = max(index - 1, 0)
             combo._tf_suggestion_index = index
-            combo.set(suggestions[index])
-            combo.selection_range(0, tk.END)
+            self._show_speaker_name_suggestions(
+                combo, suggestions, combos, names, recent_names
+            )
             return "break"
         if event.keysym == "Return":
             index = getattr(combo, "_tf_suggestion_index", -1)
             combo.set(commit_speaker_name_value(combo.get(), suggestions, index))
+            combo._tf_suggestion_index = -1
+            self._hide_speaker_name_suggestions(combo)
             self._remember_speaker_name(combo, combos, names, recent_names)
-            combo.tk.call("ttk::combobox::Unpost", str(combo))
             return "break"
         if event.keysym == "Escape":
-            combo.tk.call("ttk::combobox::Unpost", str(combo))
+            self._hide_speaker_name_suggestions(combo)
             return "break"
 
     @staticmethod
@@ -1034,6 +1165,17 @@ class App(tk.Tk):
             return False
         return focused is combo or (focused is not None and str(focused) == str(combo))
 
+    @staticmethod
+    def _speaker_name_suggestion_popup_has_focus(combo):
+        popup = getattr(combo, "_tf_suggestion_popup", None)
+        if popup is None:
+            return False
+        try:
+            focused = combo.focus_get()
+            return focused is not None and focused.winfo_toplevel() is popup
+        except (AttributeError, tk.TclError):
+            return False
+
     def _prepare_speaker_name_combo(self, combo, names, recent_names):
         def prepare_if_alive():
             try:
@@ -1055,6 +1197,13 @@ class App(tk.Tk):
                     return
             except tk.TclError:
                 return
+            if (
+                getattr(combo, "_tf_suggestion_click", False)
+                or self._speaker_name_combo_has_focus(combo)
+                or self._speaker_name_suggestion_popup_has_focus(combo)
+            ):
+                return
+            self._hide_speaker_name_suggestions(combo)
             self._remember_speaker_name(combo, combos, names, recent_names)
 
         self.after_idle(remember_if_alive)
@@ -1098,6 +1247,25 @@ class App(tk.Tk):
         name_combos = []
         recent_names = self._recent_speaker_names
         existing_names = sorted(set(payload.get("existing_names", [])), key=str.casefold)
+        active_name_combo = [None]
+
+        def refresh_active_name_matches():
+            combo = active_name_combo[0]
+            if combo is not None:
+                self._refresh_speaker_name_suggestions(
+                    combo, existing_names, recent_names, name_combos
+                )
+
+        review_controls = ttk.Frame(frame)
+        review_controls.pack(fill="x", pady=(0, 8))
+        refresh_matches_button = ttk.Button(
+            review_controls,
+            text="Refresh matches",
+            state="disabled",
+            command=refresh_active_name_matches,
+        )
+        refresh_matches_button.pack(side="right")
+
         choices = speaker_name_choices(existing_names)
         ordered_clusters = (
             [cluster for cluster in clusters if not cluster.over_limit]
@@ -1126,16 +1294,18 @@ class App(tk.Tk):
             name_vars[cluster.identifier] = variable
             combo = ttk.Combobox(row, textvariable=variable, values=choices, width=24, state="normal")
             combo.pack(side="right", fill="x", expand=True)
-            combo.bind(
-                "<FocusIn>",
-                lambda _event, widget=combo: self._prepare_speaker_name_combo(
+            def prepare_name_combo(_event, widget=combo):
+                active_name_combo[0] = widget
+                refresh_matches_button.configure(state="normal")
+                self._prepare_speaker_name_combo(
                     widget, existing_names, recent_names
-                ),
-            )
+                )
+
+            combo.bind("<FocusIn>", prepare_name_combo)
             combo.bind(
                 "<KeyRelease>",
                 lambda event, widget=combo: self._update_speaker_name_suggestions(
-                    event, widget, existing_names, recent_names
+                    event, widget, existing_names, recent_names, name_combos
                 ),
             )
             remember = lambda _event, widget=combo: self._remember_speaker_name(

@@ -32,6 +32,12 @@ class _FakeCombo:
     def focus_get(self):
         return self if self.focused else None
 
+    def focus_set(self):
+        self.focused = True
+
+    def icursor(self, index):
+        self.cursor = index
+
 
 class _FakeVariable:
     def __init__(self, value=""):
@@ -281,6 +287,88 @@ class ScheduledMeetingDialogTests(unittest.TestCase):
         self.assertEqual(another_focused_row.configure_calls, 0)
         self.assertIn("Guest Speaker", another_row.values)
         self.assertEqual(recent_names[0], "Guest Speaker")
+
+    def test_speaker_name_typing_keeps_query_and_focus_while_filtering(self):
+        current = _FakeCombo("Alex", values=["Alex Yu"], focused=True)
+        names = ["Alex Yu", "Alexandra King"]
+        shown = []
+        app = SimpleNamespace(
+            _show_speaker_name_suggestions=lambda *args: shown.append(args)
+        )
+
+        App._update_speaker_name_suggestions(
+            app, SimpleNamespace(keysym="x"), current, names, [], [current]
+        )
+
+        self.assertEqual(current.get(), "Alex")
+        self.assertEqual(current.values, ["Alex Yu"])
+        self.assertEqual(current.configure_calls, 0)
+        self.assertTrue(current.focused)
+        self.assertEqual(current._tf_suggestions, ["Alex Yu", "Alexandra King"])
+        self.assertEqual(shown, [(current, current._tf_suggestions, [current], names, [])])
+
+    def test_refresh_rechecks_matches_and_returns_focus_to_the_name_field(self):
+        current = _FakeCombo("Alex", focused=False)
+        names = ["Alex Yu", "Blair Moore"]
+        shown = []
+        app = SimpleNamespace(
+            _show_speaker_name_suggestions=lambda *args: shown.append(args)
+        )
+
+        App._refresh_speaker_name_suggestions(app, current, names, [], [current])
+
+        self.assertEqual(current.get(), "Alex")
+        self.assertTrue(current.focused)
+        self.assertEqual(current._tf_suggestions, ["Alex Yu"])
+        self.assertEqual(len(shown), 1)
+
+    def test_mouse_suggestion_replaces_typed_text(self):
+        current = _FakeCombo("Alex", focused=False)
+        names = ["Alex Yu", "Alexander King"]
+        recent_names = []
+        app = SimpleNamespace(
+            _hide_speaker_name_suggestions=lambda _combo: None,
+            _remember_speaker_name=App._remember_speaker_name,
+        )
+        current._tf_suggestions = names
+
+        App._select_speaker_name_suggestion(
+            app, current, 1, [current], names, recent_names
+        )
+
+        self.assertEqual(current.get(), "Alexander King")
+        self.assertEqual(current.cursor, "end")
+        self.assertTrue(current.focused)
+        self.assertEqual(recent_names, ["Alexander King"])
+
+    def test_keyboard_navigation_keeps_search_text_until_enter(self):
+        current = _FakeCombo("Alex", focused=True)
+        names = ["Alex Yu", "Alexandra King"]
+        recent_names = []
+        current._tf_suggestions = ["Stale result"]
+        current._tf_suggestion_index = -1
+        app = SimpleNamespace(
+            _show_speaker_name_suggestions=lambda *_args: None,
+            _hide_speaker_name_suggestions=lambda _combo: None,
+            _remember_speaker_name=App._remember_speaker_name,
+        )
+
+        result = App._navigate_speaker_name_suggestions(
+            app, SimpleNamespace(keysym="Down"), current, names, recent_names, [current]
+        )
+
+        self.assertEqual(result, "break")
+        self.assertEqual(current.get(), "Alex")
+        self.assertEqual(current._tf_suggestion_index, 0)
+        self.assertEqual(current._tf_suggestions, names)
+
+        result = App._navigate_speaker_name_suggestions(
+            app, SimpleNamespace(keysym="Return"), current, names, recent_names, [current]
+        )
+
+        self.assertEqual(result, "break")
+        self.assertEqual(current.get(), "Alex Yu")
+        self.assertEqual(recent_names, ["Alex Yu"])
 
 
 if __name__ == "__main__":
