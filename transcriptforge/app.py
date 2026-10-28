@@ -26,6 +26,7 @@ from .settings import ContentProviderHistory, FilenameTemplateSettings, LiveReco
 from .speakers import SpeakerProfileStore, remove_review_sample
 from .speaker_names import commit_speaker_name_value, similar_speaker_names, speaker_name_choices, speaker_name_suggestions
 from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
+from .instance_guard import AppInstanceGuard
 from .version import __version__
 
 NO_MEETING_SELECTION = "No meeting selected - use current workflow"
@@ -1327,7 +1328,28 @@ class App(tk.Tk):
 
 def main():
     arguments = sys.argv[1:]
+    instance_guard = AppInstanceGuard.try_acquire()
+    if instance_guard is None:
+        if "--auto-start" in arguments and "--input" in arguments:
+            input_index = arguments.index("--input") + 1
+            if input_index < len(arguments):
+                source = Path(arguments[input_index])
+                if source.is_file():
+                    history = RecordingHistory()
+                    resolved_source = str(source.resolve())
+                    pending = any(
+                        record.get("original_path") == resolved_source
+                        and record.get("status") == "pending"
+                        for record in history.records
+                    )
+                    if pending:
+                        history.update(source, "retry")
+        return
+
     def value_after(name):
         return arguments[arguments.index(name) + 1] if name in arguments and arguments.index(name) + 1 < len(arguments) else None
-    app = App(value_after("--input"), "--auto-start" in arguments, "--prompt-recording-folder" in arguments, value_after("--recording-folder"), "--identify-speakers" in arguments)
-    app.mainloop()
+    try:
+        app = App(value_after("--input"), "--auto-start" in arguments, "--prompt-recording-folder" in arguments, value_after("--recording-folder"), "--identify-speakers" in arguments)
+        app.mainloop()
+    finally:
+        instance_guard.close()

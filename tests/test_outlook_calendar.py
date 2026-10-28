@@ -73,6 +73,9 @@ class OutlookCalendarTests(unittest.TestCase):
         encoded = command[command.index("-EncodedCommand") + 1]
         script = base64.b64decode(encoded).decode("utf-16le")
         self.assertIn("New-Object -ComObject Outlook.Application", script)
+        self.assertIn("for ($attempt = 1; $attempt -le 4; $attempt++)", script)
+        self.assertIn("$hresult -in @(-2147418111, -2147417846)", script)
+        self.assertIn("Outlook Classic remained busy", script)
         self.assertNotIn("Microsoft.Graph", script)
 
     def test_python_classic_com_failure_uses_powershell_fallback(self):

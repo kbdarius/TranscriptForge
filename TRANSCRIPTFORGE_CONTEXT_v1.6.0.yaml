@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.5.0"
+  version: "1.6.0"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-10-16"
+  last_updated: "2026-10-28"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.6.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Reviewed 2026-10-16 from the working tree at application version 0.27.3; includes setting-driven scheduled scans, windowless task execution, and Outlook Classic COM access through pywin32 with a hidden PowerShell fallback."
+    value: "Updated 2026-10-28 from the working tree at application version 0.27.4; includes setting-driven scheduled scans, windowless task execution, a per-session desktop-instance guard, and Outlook Classic COM access with bounded retries for temporary busy responses."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.27.3; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.27.4; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; recording lifecycle and meeting carryover are covered by source review and automated tests."
@@ -233,7 +233,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.6.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -251,6 +251,8 @@ file_structure:
       purpose: "Local JSON settings, including the recent Add content provider history."
     - path: "transcriptforge/recording.py"
       purpose: "Background Windows playback loopback recording and PCM WAV output."
+    - path: "transcriptforge/instance_guard.py"
+      purpose: "Per-session Windows event marker preventing duplicate desktop application windows."
     - path: "tests/"
       purpose: "Standard-library unittest coverage for application behavior and guided setup dependency/reporting behavior."
     - path: "DOC/README.md"
@@ -286,7 +288,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.6.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -391,6 +393,7 @@ workflows:
       - "Resolve the saved per-PC recording-folder setting on every scan; it takes precedence over a legacy task folder argument."
       - "Register the task with the current project root as its working directory; rerun the installer after moving the project."
       - "Run the scheduled scan with pyw.exe or pythonw.exe so empty checks do not flash a console window."
+      - "Skip the scan when the desktop app's per-session marker is open, and check again before marking a candidate pending."
       - "transcriptforge/scheduler.py selects an eligible recording older than its minimum age and launches the GUI."
       - "The user can transcribe, ignore, or delete the selected recording; history supports later requeue of ignored or pending recordings."
     outputs:
@@ -491,11 +494,11 @@ constraints_and_known_issues:
     evidence:
       - "README.md"
       - "DOC/INSTALLATION.md"
-  - description: "Outlook meeting lookup uses only the installed Outlook Classic COM interface and default local calendar; pywin32 activation failures use hidden Windows PowerShell COM, not New Outlook or Microsoft Graph."
+  - description: "Outlook meeting lookup uses only the installed Outlook Classic COM interface and default local calendar; pywin32 activation failures use hidden Windows PowerShell COM with bounded retries for temporary busy responses, not New Outlook or Microsoft Graph."
     status: "confirmed"
     affected_areas:
       - "transcriptforge/outlook_calendar.py"
-    workaround: "Keep Outlook Classic installed and configured; if Python COM activation fails, the app tries its hidden Windows PowerShell COM fallback. Use the no-meeting option when Outlook Classic is unavailable."
+    workaround: "Keep Outlook Classic installed and configured; if Python COM activation fails, the hidden PowerShell fallback retries known temporary Outlook-busy COM responses before returning an error. Use the no-meeting option when Outlook Classic is unavailable."
     evidence:
       - "transcriptforge/outlook_calendar.py"
       - "tests/test_outlook_calendar.py"
@@ -667,6 +670,18 @@ recent_changes_summary:
       - "README.md"
       - "DOC/INSTALLATION.md"
     evidence: "A count-only live Outlook Classic COM fallback check and automated tests for application version 0.27.3."
+  - date: "2026-10-28"
+    description: "Added a per-session Windows desktop-instance guard so scheduled scans skip while the app is open, and bounded retries when Outlook Classic temporarily rejects COM calls."
+    affected_areas:
+      - "transcriptforge/instance_guard.py"
+      - "transcriptforge/app.py"
+      - "transcriptforge/scheduler.py"
+      - "transcriptforge/outlook_calendar.py"
+      - "tests/test_instance_guard.py"
+      - "tests/test_scheduler.py"
+      - "tests/test_outlook_calendar.py"
+      - "README.md"
+    evidence: "Automated tests cover active-app scan skips, duplicate launch protection and recovery, and retry handling for Outlook's transient busy HRESULTs; application version 0.27.4."
 
 ai_navigation:
   bootstrap_sequence:
@@ -677,7 +692,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.5.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.6.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

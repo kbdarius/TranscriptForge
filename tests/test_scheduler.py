@@ -2,12 +2,17 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from transcriptforge import scheduler
 
 
 class ScheduledScanTests(unittest.TestCase):
+    def setUp(self):
+        app_running = patch.object(scheduler, "is_desktop_app_running", return_value=False)
+        app_running.start()
+        self.addCleanup(app_running.stop)
+
     def test_saved_recording_folder_overrides_stale_task_argument(self):
         saved_folder = Path("D:/OneDrive/Recordings")
         stale_folder = Path("C:/Users/old/Recordings")
@@ -63,6 +68,42 @@ class ScheduledScanTests(unittest.TestCase):
                 self.assertEqual(scheduler.scan_and_launch(stale_folder), 0)
             find_new_recording.assert_called_once_with(saved_folder, history)
             launch_gui.assert_not_called()
+
+    def test_scan_skips_all_work_when_desktop_app_is_open(self):
+        with (
+            patch.object(scheduler, "is_desktop_app_running", return_value=True),
+            patch.object(scheduler, "RecordingHistory") as recording_history,
+            patch.object(scheduler, "RecordingFolderSettings") as folder_settings,
+            patch.object(scheduler, "find_new_recording") as find_new_recording,
+            patch.object(scheduler, "_launch_gui") as launch_gui,
+        ):
+            self.assertEqual(scheduler.scan_and_launch(), 0)
+
+        recording_history.assert_not_called()
+        folder_settings.assert_not_called()
+        find_new_recording.assert_not_called()
+        launch_gui.assert_not_called()
+
+    def test_scan_rechecks_before_marking_recording_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source = folder / "meeting.mp4"
+            history = SimpleNamespace(update=Mock())
+            with (
+                patch.object(
+                    scheduler,
+                    "RecordingFolderSettings",
+                    return_value=SimpleNamespace(folder=str(folder)),
+                ),
+                patch.object(scheduler, "RecordingHistory", return_value=history),
+                patch.object(scheduler, "find_new_recording", return_value=source),
+                patch.object(scheduler, "is_desktop_app_running", side_effect=[False, True]),
+                patch.object(scheduler, "_launch_gui") as launch_gui,
+            ):
+                self.assertEqual(scheduler.scan_and_launch(), 0)
+
+        history.update.assert_not_called()
+        launch_gui.assert_not_called()
 
     def test_scan_without_any_folder_prompts_for_recording_folder(self):
         with (

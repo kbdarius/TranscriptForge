@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .instance_guard import is_desktop_app_running
 from .media import SUPPORTED_EXTENSIONS
 from .settings import RecordingFolderSettings, RecordingHistory
 
@@ -37,6 +38,8 @@ def resolve_recording_folder(folder: Path | None = None) -> Path | None:
 
 
 def scan_and_launch(folder: Path | None = None, python_executable: str | None = None) -> int:
+    if is_desktop_app_running():
+        return 0
     history = RecordingHistory()
     folder = resolve_recording_folder(folder)
     if folder is None or not folder.is_dir():
@@ -44,6 +47,8 @@ def scan_and_launch(folder: Path | None = None, python_executable: str | None = 
         return 0
     source = find_new_recording(folder, history)
     if source is None:
+        return 0
+    if is_desktop_app_running():
         return 0
     history.update(source, "pending")
     _launch_gui(["--input", str(source), "--auto-start", "--identify-speakers", "--recording-folder", str(folder)], python_executable)
