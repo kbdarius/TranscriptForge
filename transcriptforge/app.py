@@ -1,3 +1,4 @@
+import calendar
 import os
 import queue
 import re
@@ -7,7 +8,7 @@ import threading
 import wave
 import zipfile
 import tkinter as tk
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -25,7 +26,7 @@ from .recording import PlaybackAudioRecorder
 from .settings import ContentProviderHistory, FilenameTemplateSettings, LiveRecordingFolderSettings, MeetingOutputSettings, OutputLocationHistory, PreferencesSettings, RecordingFolderSettings, RecordingHistory, SampleRejectionStore
 from .speakers import SpeakerProfileStore, remove_review_sample
 from .speaker_names import commit_speaker_name_value, similar_speaker_names, speaker_name_choices, speaker_name_suggestions
-from .outlook_calendar import OutlookMeeting, meetings_on, today_meetings
+from .outlook_calendar import OutlookMeeting, meetings_on
 from .instance_guard import AppInstanceGuard
 from .version import __version__
 
@@ -33,7 +34,7 @@ NO_MEETING_SELECTION = "No meeting selected - use current workflow"
 
 class App(tk.Tk):
     def __init__(self, initial_input=None, auto_start=False, prompt_recording_folder=False, recording_folder=None, identify_speakers=False):
-        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.today_outlook_meetings = []; self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
+        super().__init__(); self.title(f"TranscriptForge v{__version__}"); self.geometry("950x680"); self.events = queue.Queue(); self.controller = None; self.speaker_review = None; self.speaker_review_analysis = None; self._recent_speaker_names = []; self.output_history = OutputLocationHistory(); self.recording_settings = RecordingFolderSettings(); self.meeting_output_settings = MeetingOutputSettings(); self.outlook_meetings = []; self.outlook_meeting_date = datetime.now().date(); self.selected_outlook_meeting = None; self.outlook_loading = True; self.outlook_ready = False; self._outlook_fetch_started = False
         self._scheduled_meeting_dialog = None; self._scheduled_meeting_combo = None; self._scheduled_meeting_var = None; self._scheduled_meeting_status = None; self._scheduled_speaker_limit_var = None; self._scheduled_meeting_user_selected = False; self._scheduled_meetings = []
         self.live_recording_settings = LiveRecordingFolderSettings()
         self.content_provider_history = ContentProviderHistory()
@@ -41,7 +42,7 @@ class App(tk.Tk):
         self.live_recording_folder_var = tk.StringVar(value=default_live_folder)
         self.live_recorder = None; self._capture_should_transcribe = False; self._capture_discard = False; self._close_after_capture = False; self._pending_live_transcription = False
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
-        self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_today_outlook_meetings)
+        self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_outlook_meetings)
         self.protocol("WM_DELETE_WINDOW", self._close_application)
     def _window_title(self, label):
         return f"TranscriptForge v{__version__} - {label}"
@@ -60,13 +61,19 @@ class App(tk.Tk):
         self.append_button = ttk.Button(actions, text="Add content", command=self._append_content, state="disabled"); self.append_button.pack(side="left", padx=4)
 
     def _meeting_row(self, parent, row):
-        ttk.Label(parent, text="Today's Outlook meeting").grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(parent, text="Outlook meeting").grid(row=row, column=0, sticky="w", pady=5)
         self.meeting_combo = ttk.Combobox(parent, textvariable=self.meeting_var, state="disabled")
         self.meeting_combo.grid(row=row, column=1, sticky="ew", pady=5)
         self.meeting_combo.bind("<<ComboboxSelected>>", self._select_outlook_meeting)
+        self.outlook_date_button = ttk.Button(
+            parent,
+            text=self._outlook_date_button_text(),
+            command=self._choose_outlook_date,
+        )
+        self.outlook_date_button.grid(row=row, column=2, padx=5)
         self.refresh_meetings_button = ttk.Button(parent, text="Refresh", command=self._refresh_outlook_meetings)
-        self.refresh_meetings_button.grid(row=row, column=2, padx=5)
-        self._job_controls.extend([self.meeting_combo, self.refresh_meetings_button])
+        self.refresh_meetings_button.grid(row=row, column=3, padx=5)
+        self._job_controls.extend([self.meeting_combo, self.outlook_date_button, self.refresh_meetings_button])
     def _row(self, parent, row, label, variable, command):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5); entry = ttk.Entry(parent, textvariable=variable); entry.grid(row=row, column=1, sticky="ew", pady=5)
         if command:
@@ -77,19 +84,128 @@ class App(tk.Tk):
     def _folder_row(self, parent, row):
         ttk.Label(parent, text="Output folder").grid(row=row, column=0, sticky="w", pady=5); self.folder_combo = ttk.Combobox(parent, textvariable=self.folder_var, values=self.output_history.locations, state="normal"); self.folder_combo.grid(row=row, column=1, sticky="ew", pady=5); button = ttk.Button(parent, text="Browse", command=self._browse_folder); button.grid(row=row, column=2, padx=5); self._job_controls.append(button)
 
-    def _load_today_outlook_meetings(self):
+    def _outlook_date_button_text(self):
+        return f"📅 {self.outlook_meeting_date:%Y-%m-%d}"
+
+    def _choose_outlook_date(self):
+        dialog = tk.Toplevel(self)
+        dialog.title(self._window_title("Choose Outlook meeting date"))
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        shown_month = [self.outlook_meeting_date.replace(day=1)]
+
+        header = ttk.Frame(dialog, padding=(10, 10, 10, 4))
+        header.pack(fill="x")
+        previous_button = ttk.Button(header, text="Previous", width=8)
+        previous_button.pack(side="left")
+        month_label = ttk.Label(header, anchor="center")
+        month_label.pack(side="left", fill="x", expand=True, padx=8)
+        next_button = ttk.Button(header, text="Next", width=8)
+        next_button.pack(side="right")
+
+        days_frame = ttk.Frame(dialog, padding=(10, 0, 10, 4))
+        days_frame.pack()
+        footer = ttk.Frame(dialog, padding=(10, 4, 10, 10))
+        footer.pack(fill="x")
+
+        def close_dialog():
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        def select_date(selected_date):
+            self._set_outlook_meeting_date(selected_date)
+            close_dialog()
+
+        def change_month(offset):
+            current = shown_month[0]
+            month_index = current.year * 12 + current.month - 1 + offset
+            year, month_index = divmod(month_index, 12)
+            if 1 <= year <= 9999:
+                shown_month[0] = date(year, month_index + 1, 1)
+                render_month()
+
+        def render_month():
+            for child in days_frame.winfo_children():
+                child.destroy()
+            current = shown_month[0]
+            month_label.configure(text=current.strftime("%B %Y"))
+            for column, weekday in enumerate(("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")):
+                ttk.Label(days_frame, text=weekday, anchor="center", width=4).grid(
+                    row=0, column=column, padx=1, pady=2
+                )
+            weeks = calendar.Calendar(firstweekday=calendar.MONDAY).monthdayscalendar(
+                current.year,
+                current.month,
+            )
+            for row, week in enumerate(weeks, start=1):
+                for column, day_number in enumerate(week):
+                    if day_number:
+                        ttk.Button(
+                            days_frame,
+                            text=str(day_number),
+                            width=4,
+                            command=lambda day_number=day_number: select_date(
+                                date(current.year, current.month, day_number)
+                            ),
+                        ).grid(row=row, column=column, padx=1, pady=1)
+                    else:
+                        ttk.Label(days_frame, text="", width=4).grid(
+                            row=row, column=column, padx=1, pady=1
+                        )
+
+        previous_button.configure(command=lambda: change_month(-1))
+        next_button.configure(command=lambda: change_month(1))
+        ttk.Button(
+            footer,
+            text="Today",
+            command=lambda: select_date(datetime.now().date()),
+        ).pack(side="left")
+        ttk.Button(footer, text="Cancel", command=close_dialog).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+        render_month()
+
+    def _set_outlook_meeting_date(self, selected_date: date):
+        if selected_date == self.outlook_meeting_date:
+            return
+        self.outlook_meeting_date = selected_date
+        self.outlook_date_button.configure(text=self._outlook_date_button_text())
+        self.outlook_meetings = []
+        self.selected_outlook_meeting = None
+        self.outlook_ready = False
+        self._outlook_fetch_started = False
+        self.meeting_combo.configure(values=(), state="disabled")
+        self.meeting_var.set(
+            f"Click Refresh to load meetings for {selected_date:%Y-%m-%d}"
+        )
+
+    def _no_outlook_meetings_text(self):
+        if self.outlook_meeting_date == datetime.now().date():
+            return "No Outlook meetings today"
+        return f"No Outlook meetings on {self.outlook_meeting_date:%Y-%m-%d}"
+
+    def _load_outlook_meetings(self):
         if self._outlook_fetch_started:
             return
         self._outlook_fetch_started = True
         self.outlook_loading = True
+        selected_date = self.outlook_meeting_date
+        query_datetime = datetime.combine(selected_date, datetime.min.time())
         if getattr(self, "refresh_meetings_button", None):
             self.refresh_meetings_button.configure(state="disabled")
+        if getattr(self, "outlook_date_button", None):
+            self.outlook_date_button.configure(state="disabled")
         if self.selected_outlook_meeting is None:
-            self.meeting_var.set("Loading today's meetings...")
+            self.meeting_var.set(
+                f"Loading Outlook meetings for {selected_date:%Y-%m-%d}..."
+            )
 
         def work():
             try:
-                self.events.put(("outlook_meetings", today_meetings()))
+                self.events.put(("outlook_meetings", meetings_on(query_datetime)))
             except Exception as exc:
                 self.events.put(("outlook_error", str(exc)))
 
@@ -99,19 +215,22 @@ class App(tk.Tk):
         if self.outlook_loading:
             return
         self._outlook_fetch_started = False
-        self._load_today_outlook_meetings()
+        self._load_outlook_meetings()
 
-    def _set_today_outlook_meetings(self, meetings):
+    def _set_outlook_meetings(self, meetings):
         self.outlook_loading = False
         self.outlook_ready = True
-        self.today_outlook_meetings = meetings
+        self.outlook_meetings = meetings
         values = [meeting.display for meeting in meetings]
         self.meeting_combo.configure(values=values, state="readonly")
         self.refresh_meetings_button.configure(state="normal")
+        self.outlook_date_button.configure(state="normal")
         selected = self._matching_scheduled_meeting(meetings, self.selected_outlook_meeting)
         if selected is None:
             self.selected_outlook_meeting = None
-            self.meeting_var.set("Select a meeting (optional)" if values else "No Outlook meetings today")
+            self.meeting_var.set(
+                "Select a meeting (optional)" if values else self._no_outlook_meetings_text()
+            )
         else:
             self.selected_outlook_meeting = selected
             self.meeting_var.set(selected.display)
@@ -123,12 +242,12 @@ class App(tk.Tk):
         else:
             self.meeting_var.set(
                 "Select a meeting (optional)"
-                if self.today_outlook_meetings
-                else "No Outlook meetings today"
+                if self.outlook_meetings
+                else self._no_outlook_meetings_text()
             )
 
     def _select_outlook_meeting(self, _event=None):
-        selected = next((meeting for meeting in self.today_outlook_meetings if meeting.display == self.meeting_var.get()), None)
+        selected = next((meeting for meeting in self.outlook_meetings if meeting.display == self.meeting_var.get()), None)
         if selected is None:
             self.selected_outlook_meeting = None
             return
@@ -867,7 +986,11 @@ class App(tk.Tk):
         self.download_button.configure(text="Model installed" if installed else "Download model", state="disabled" if installed else "normal")
     def _start(self, *, meeting_override=None, use_meeting_override=False, max_speakers=None):
         if self.outlook_loading and not use_meeting_override:
-            return messagebox.showinfo(self._window_title("Outlook meetings still loading"), "Today's Outlook meetings are still loading. Please wait a moment, or use Refresh before starting transcription.", parent=self)
+            return messagebox.showinfo(
+                self._window_title("Outlook meetings still loading"),
+                f"Outlook meetings for {self.outlook_meeting_date:%Y-%m-%d} are still loading. Please wait a moment, or use Refresh before starting transcription.",
+                parent=self,
+            )
         if getattr(self, "awaiting_transcription", False):
             return self._confirm_transcription()
         meeting = meeting_override if use_meeting_override else self.selected_outlook_meeting
@@ -1369,14 +1492,14 @@ class App(tk.Tk):
                 elif kind == "status": self.status_var.set(value)
                 elif kind == "log": self._write_log(str(value))
                 elif kind == "model_ready": self._update_model_button()
-                elif kind == "outlook_meetings": self._set_today_outlook_meetings(value); self._maybe_start_pending_live_transcription()
+                elif kind == "outlook_meetings": self._set_outlook_meetings(value); self._maybe_start_pending_live_transcription()
                 elif kind == "outlook_error":
-                    self.outlook_loading = False; self.outlook_ready = True; self.refresh_meetings_button.configure(state="normal")
+                    self.outlook_loading = False; self.outlook_ready = True; self.refresh_meetings_button.configure(state="normal"); self.outlook_date_button.configure(state="normal")
                     if self.selected_outlook_meeting is None:
-                        self.meeting_combo.configure(values=(), state="disabled"); self.meeting_var.set("Outlook calendar unavailable")
+                        self.meeting_combo.configure(values=(), state="disabled"); self.meeting_var.set(f"Outlook calendar unavailable for {self.outlook_meeting_date:%Y-%m-%d}")
                     else:
                         self.meeting_combo.configure(values=[self.selected_outlook_meeting.display], state="readonly"); self.meeting_var.set(self.selected_outlook_meeting.display)
-                    self._write_log(f"Could not read today's Outlook meetings: {value}"); self._maybe_start_pending_live_transcription()
+                    self._write_log(f"Could not read Outlook meetings for {self.outlook_meeting_date:%Y-%m-%d}: {value}"); self._maybe_start_pending_live_transcription()
                 elif kind == "scheduled_meetings": self._set_scheduled_meetings(*value)
                 elif kind == "scheduled_meeting_error": self._set_scheduled_meeting_error(*value)
                 elif kind == "live_recording_started":
@@ -1429,7 +1552,7 @@ class App(tk.Tk):
             except OSError as exc:
                 self._write_log(f"Could not update recording history: {exc}")
     def _new_transcription(self):
-        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.meeting_var.set("Select a meeting (optional)" if self.today_outlook_meetings else "No Outlook meetings today"); self.selected_outlook_meeting = None; self.active_meeting = None; self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
+        self.input_var.set(""); self.folder_var.set(""); self.filename_var.set(""); self.meeting_var.set("Select a meeting (optional)" if self.outlook_meetings else self._no_outlook_meetings_text()); self.selected_outlook_meeting = None; self.active_meeting = None; self.model_var.set("small.en"); self.language_var.set("en"); self.expected_speakers_var.set(""); self.retain.set(False); self.include_timestamps.set(True); self.open_after.set(True); self.identify_speakers.set(False); self.rename_source.set(True); self.awaiting_transcription = False; self.progress["value"] = 0; self.status_var.set("Select an audio or video file."); self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled"); self.transcribe_button.configure(state="disabled", text="Transcribe"); self.append_button.configure(state="disabled")
     def _append_content(self):
         path = getattr(self, "active_output", None)
         if not path or not Path(path).is_file():

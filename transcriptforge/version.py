@@ -1,3 +1,3 @@
 """TranscriptForge version information."""
 
-__version__ = "0.27.5"
+__version__ = "0.28.0"

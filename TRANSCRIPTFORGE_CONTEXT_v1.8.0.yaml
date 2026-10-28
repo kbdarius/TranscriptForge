@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.7.0"
+  version: "1.8.0"
   status: "current"
   created_date: "2026-09-25"
   last_updated: "2026-10-28"
   target_root: 'C:\Users\dariusk\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.7.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.8.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Updated 2026-10-28 from the working tree at application version 0.27.5; includes setting-driven scheduled scans, windowless task execution, a per-session desktop-instance guard, bounded Outlook Classic COM retries, and speaker-name type-ahead suggestions that preserve entry focus."
+    value: "Updated 2026-10-28 from the working tree at application version 0.28.0; includes setting-driven scheduled scans, a per-session desktop-instance guard, Outlook Classic COM retries, date-selectable meeting lookup in the main window, and speaker-name type-ahead suggestions that preserve entry focus."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.27.5; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.28.0; verify claims against current source and tests after later changes."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; speaker-name focus and mouse selection were validated with a local Tk widget check."
@@ -48,7 +48,7 @@ project_overview:
 project_components:
   - name: "Desktop GUI"
     path: "transcriptforge/app.py"
-    purpose: "Provides the Tkinter transcription, live-recording, setup, speaker-review, Outlook meeting, history, and profile-management workflows."
+    purpose: "Provides the Tkinter transcription, live-recording, setup, speaker-review, date-selectable Outlook meeting, history, and profile-management workflows."
     critical: true
     authoritative_sources:
       - "transcriptforge/app.py"
@@ -233,7 +233,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.7.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.8.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -288,7 +288,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.7.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.8.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -406,10 +406,12 @@ workflows:
   - name: "Meeting-aware speaker review"
     trigger: "The user selects an Outlook meeting in the main window or scheduled-recording prompt."
     inputs:
+      - "A main-window Outlook date, defaulting to today; the scheduled prompt uses the recording date."
       - "The recording date from a supported filename timestamp when available, otherwise the file modified time."
       - "Organizer and attendee names from the selected local Outlook Classic appointment."
       - "Existing local speaker profiles."
     steps:
+      - "Choose a calendar date in the main window and select Refresh to query that date in the local Outlook Classic calendar; dates can be browsed by month."
       - "Leave the explicit no-meeting option selected to preserve the current preference-driven workflow."
       - "If the main window already has a selected appointment that matches one returned for the recording date, carry that selection and its invitee-count limit into the scheduled-recording prompt."
       - "If the earlier selection does not match the recording date, keep the date-specific appointments available and do not silently substitute the unrelated meeting."
@@ -690,6 +692,13 @@ recent_changes_summary:
       - "tests/test_app_meeting.py"
       - "README.md"
     evidence: "Automated speaker-review tests cover retained query text, refresh behavior, keyboard navigation, and mouse selection; application version 0.27.5."
+  - date: "2026-10-28"
+    description: "Added a main-window calendar date selector for Outlook Classic meeting lookup, defaulting to today and allowing users to refresh meetings for earlier dates."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "tests/test_app_meeting.py"
+      - "README.md"
+    evidence: "Automated tests verify date selection, stale-meeting clearing, selected-day Outlook queries, and empty results; application version 0.28.0."
 
 ai_navigation:
   bootstrap_sequence:
@@ -700,7 +709,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.7.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.8.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

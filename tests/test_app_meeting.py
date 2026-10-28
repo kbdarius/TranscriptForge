@@ -1,9 +1,10 @@
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
+from unittest.mock import patch
 
 from transcriptforge.app import App, NO_MEETING_SELECTION
 from transcriptforge.controller import _review_speaker_names
@@ -17,6 +18,7 @@ class _FakeCombo:
         self.values = list(values)
         self.configure_calls = 0
         self.focused = focused
+        self.configure_options = {}
 
     def get(self):
         return self.value
@@ -26,6 +28,7 @@ class _FakeCombo:
 
     def configure(self, **options):
         self.configure_calls += 1
+        self.configure_options.update(options)
         if "values" in options:
             self.values = list(options["values"])
 
@@ -171,18 +174,100 @@ class ScheduledMeetingDialogTests(unittest.TestCase):
         state = SimpleNamespace(
             outlook_loading=True,
             outlook_ready=False,
-            today_outlook_meetings=[],
+            outlook_meetings=[],
+            outlook_meeting_date=datetime(2026, 9, 28).date(),
             selected_outlook_meeting=selected,
             _matching_scheduled_meeting=App._matching_scheduled_meeting,
             meeting_combo=_FakeCombo(),
             refresh_meetings_button=_FakeCombo(),
+            outlook_date_button=_FakeCombo(),
             meeting_var=_FakeVariable(),
         )
 
-        App._set_today_outlook_meetings(state, [refreshed])
+        App._set_outlook_meetings(state, [refreshed])
 
         self.assertIs(state.selected_outlook_meeting, refreshed)
         self.assertEqual(state.meeting_var.get(), refreshed.display)
+
+    def test_selecting_a_past_outlook_date_clears_old_meeting_choices(self):
+        state = SimpleNamespace(
+            outlook_meeting_date=date(2026, 9, 28),
+            outlook_date_button=_FakeCombo(),
+            outlook_meetings=[object()],
+            selected_outlook_meeting=object(),
+            outlook_ready=True,
+            _outlook_fetch_started=True,
+            meeting_combo=_FakeCombo(),
+            meeting_var=_FakeVariable("Example Standup"),
+        )
+        state._outlook_date_button_text = MethodType(
+            App._outlook_date_button_text,
+            state,
+        )
+        selected_date = date(2026, 9, 23)
+
+        App._set_outlook_meeting_date(state, selected_date)
+
+        self.assertEqual(state.outlook_meeting_date, selected_date)
+        self.assertEqual(state.outlook_date_button.configure_options["text"], "📅 2026-09-23")
+        self.assertEqual(state.meeting_combo.values, [])
+        self.assertEqual(state.meeting_combo.configure_options["state"], "disabled")
+        self.assertEqual(state.meeting_var.get(), "Click Refresh to load meetings for 2026-09-23")
+        self.assertEqual(state.outlook_meetings, [])
+        self.assertIsNone(state.selected_outlook_meeting)
+        self.assertFalse(state.outlook_ready)
+        self.assertFalse(state._outlook_fetch_started)
+
+    def test_refresh_queries_the_selected_outlook_date(self):
+        selected_date = date(2026, 9, 23)
+        events = []
+        state = SimpleNamespace(
+            _outlook_fetch_started=False,
+            outlook_loading=False,
+            outlook_meeting_date=selected_date,
+            refresh_meetings_button=_FakeCombo(),
+            outlook_date_button=_FakeCombo(),
+            selected_outlook_meeting=None,
+            meeting_var=_FakeVariable(),
+            events=SimpleNamespace(put=events.append),
+        )
+        with (
+            patch("transcriptforge.app.meetings_on", return_value=[]) as meetings_on,
+            patch("transcriptforge.app.threading.Thread") as thread,
+        ):
+            App._load_outlook_meetings(state)
+            thread.call_args.kwargs["target"]()
+
+        meetings_on.assert_called_once_with(
+            datetime.combine(selected_date, datetime.min.time())
+        )
+        self.assertEqual(events, [("outlook_meetings", [])])
+        self.assertEqual(
+            state.meeting_var.get(),
+            "Loading Outlook meetings for 2026-09-23...",
+        )
+
+    def test_empty_outlook_result_names_the_selected_date(self):
+        state = SimpleNamespace(
+            outlook_loading=True,
+            outlook_ready=False,
+            outlook_meetings=[],
+            outlook_meeting_date=date(2026, 9, 23),
+            selected_outlook_meeting=None,
+            _matching_scheduled_meeting=App._matching_scheduled_meeting,
+            meeting_combo=_FakeCombo(),
+            refresh_meetings_button=_FakeCombo(),
+            outlook_date_button=_FakeCombo(),
+            meeting_var=_FakeVariable(),
+        )
+        state._no_outlook_meetings_text = MethodType(
+            App._no_outlook_meetings_text,
+            state,
+        )
+
+        App._set_outlook_meetings(state, [])
+
+        self.assertEqual(state.meeting_var.get(), "No Outlook meetings on 2026-09-23")
 
     def test_scheduled_meeting_override_updates_main_window_selection(self):
         selected = OutlookMeeting(
@@ -193,7 +278,7 @@ class ScheduledMeetingDialogTests(unittest.TestCase):
             ("Guest One",),
         )
         state = SimpleNamespace(
-            today_outlook_meetings=[selected],
+            outlook_meetings=[selected],
             selected_outlook_meeting=None,
             meeting_var=_FakeVariable("Select a meeting (optional)"),
         )
@@ -212,7 +297,8 @@ class ScheduledMeetingDialogTests(unittest.TestCase):
             ("Guest One",),
         )
         state = SimpleNamespace(
-            today_outlook_meetings=[selected],
+            outlook_meetings=[selected],
+            outlook_meeting_date=selected.start.date(),
             selected_outlook_meeting=selected,
             meeting_var=_FakeVariable(selected.display),
         )
