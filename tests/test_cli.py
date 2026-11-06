@@ -11,10 +11,12 @@ from transcriptforge.settings import FilenameTemplateSettings, MeetingOutputSett
 
 class CliTests(unittest.TestCase):
     def test_parser_supports_machine_readable_transcription(self):
-        args = build_parser().parse_args(["--json-events", "transcribe", "meeting.mp4", "--speakers"])
+        args = build_parser().parse_args(["--json-events", "transcribe", "meeting.mp4", "--speakers", "--copilot-summary", "--meeting-title", "DIU review"])
         self.assertTrue(args.json_events)
         self.assertTrue(args.speakers)
         self.assertEqual(args.model, "small.en")
+        self.assertTrue(args.copilot_summary)
+        self.assertEqual(args.meeting_title, "DIU review")
 
     def test_parser_supports_expected_speakers_and_diagnostics(self):
         args = build_parser().parse_args(["transcribe", "meeting.mp4", "--speakers", "--expected-speaker", "Alex", "--expected-speaker", "Blair"])

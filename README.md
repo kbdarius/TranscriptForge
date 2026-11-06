@@ -1,12 +1,14 @@
 # TranscriptForge
 
-TranscriptForge is a local-first Windows desktop application for turning an audio or video file into a timestamped Markdown transcript. Audio is decoded locally with the FFmpeg executable supplied by `imageio-ffmpeg`, then passed to local Whisper as NumPy samples. No audio or transcript is uploaded.
+TranscriptForge is a local-first Windows desktop application for turning an audio or video file into a timestamped Markdown transcript. Audio is decoded locally with the FFmpeg executable supplied by `imageio-ffmpeg`, then passed to local Whisper as NumPy samples. Audio is never uploaded. Transcript text remains local unless the optional GitHub Copilot summary is explicitly enabled.
 
-Current version: `0.28.0`.
+Current version: `0.29.0`.
 
 For a new Windows PC, run [Setup_TranscriptForge.bat](Setup_TranscriptForge.bat) once before launching the application. It opens a guided setup wizard that lists required and optional dependencies, installs packages in the background, continues after individual failures, and provides a copyable or saveable IT report with the Python executable and download hosts involved. See the [installation guide](DOC/INSTALLATION.md) for the complete dependency list, model setup, and restricted-PC troubleshooting. The [documentation index](DOC/README.md) links the project proposal, current speaker-recognition behavior, and feasibility plan. The optional local Outlook calendar selector requires Outlook Classic on that PC.
 
-Generated transcripts contain the transcript metadata and transcript content only; internal processing notes are kept out of the Markdown output.
+Generated transcripts contain transcript metadata and content, plus an optional short GitHub Copilot summary when enabled; internal processing notes are kept out of the Markdown output.
+
+In **Setup > GitHub Copilot meeting summary**, enable **Add a short Copilot summary** to place two to six high-level project/topic bullets above the transcript metadata. The editable project list starts with BESS, CASES, DIU, Li610/Thunderbird/Charger/OPUS, NexusGateway/Digi, and Forge Nano. Copilot is instructed to use **Unassigned** when the project is not supported by the meeting title or transcript. This option sends the meeting title, speaker names, and a bounded transcript excerpt to GitHub Copilot using the signed-in GitHub/Copilot account; it never sends audio, file paths, or voice profiles. Long transcripts use bounded excerpts from the start, middle, and end, and the application records that limitation in its activity log. Summary, authentication, network, timeout, or model failures are logged without blocking the ordinary transcript.
 
 ## Run
 
@@ -57,11 +59,11 @@ When local speaker identification is enabled, the two speaker-review dialogs are
 
 Clicking a sample's **X** now asks for a removal reason and optional note. The reason and embedding are stored locally in `%LOCALAPPDATA%\LocalAudioTranscriber\speaker-sample-rejections.json`; the audio itself is not retained. Removed samples are excluded from profile learning, and a cluster with all samples removed is not shown again in the second review. After transcription, short `Unknown` segments (up to three seconds) are filled only when the nearest labeled speakers on both sides agree, so ambiguous sections remain `Unknown` rather than receiving an unsafe guess.
 
-The main window keeps the core file, model, and transcription controls visible. Click the gear button (`⚙`) to open **TranscriptForge Setup** for optional settings such as speaker identification, timestamps, retaining the decoded WAV, opening the result automatically, language, and media renaming.
+The main window keeps the core file, model, and transcription controls visible. Click the gear button (`⚙`) to open **TranscriptForge Setup** for optional settings such as speaker identification, GitHub Copilot summaries, timestamps, retaining the decoded WAV, opening the result automatically, language, and media renaming. Use **Test Copilot connection** to check sign-in and model availability without sending transcript text.
 
 Setup also includes **View history**, which displays the locally stored transcription ledger with the recording filename prominently shown, status, update time, full paths, and horizontal scrolling for long locations. Select a row to see its paths, open the transcript, or open its output folder.
 
-Setup includes **Export configuration** and **Import configuration**. The portable `.tfconfig` package transfers the Setup preferences, selected Whisper model name, recurring filename templates, confirmed speaker embeddings, and removed-sample decisions. Import merges speaker data with profiles already on the destination PC, so it does not discard newer training. It intentionally excludes recording-folder settings, output-location dropdown history, recent **Provided by** names, meeting-output settings, transcription history, Whisper model files, audio, transcripts, and other computer-specific paths; those remain local to each PC.
+Setup includes **Export configuration** and **Import configuration**. The portable `.tfconfig` package transfers the Setup preferences, editable summary project list, selected Whisper model name, recurring filename templates, confirmed speaker embeddings, and removed-sample decisions. The remote Copilot-summary opt-in is reset to off in exported packages, so it must be enabled deliberately on each PC. Import merges speaker data with profiles already on the destination PC, so it does not discard newer training. It intentionally excludes recording-folder settings, output-location dropdown history, recent **Provided by** names, meeting-output settings, transcription history, Whisper model files, audio, transcripts, and other computer-specific paths; those remain local to each PC.
 
 The [example configuration](example%20configuration/README.md) folder contains batch files for creating and importing a private configuration package. The package is ignored by Git because it contains sensitive voice-learning data. Copy that private `.tfconfig` file to the destination PC alongside the setup batch file; do not commit it or send it through an untrusted channel.
 
@@ -130,6 +132,12 @@ py -3 -m transcriptforge.cli transcribe "C:\path\meeting.mp4" --model small.en
 
 # Machine-readable newline-delimited JSON events for an agent
 py -3 -m transcriptforge.cli --json-events transcribe "C:\path\meeting.mp4" --output "C:\path\meeting.md" --force
+```
+
+Add an optional GitHub Copilot summary and supply meeting/project context explicitly:
+
+```powershell
+py -3 -m transcriptforge.cli transcribe "C:\path\meeting.mp4" --copilot-summary --meeting-title "DIU Review" --summary-projects "BESS; CASES; DIU; Li610; NexusGateway (Digi)"
 ```
 
 Speaker identification has an explicit human-review handoff. The first command below analyzes voices and writes a review file without starting Whisper:

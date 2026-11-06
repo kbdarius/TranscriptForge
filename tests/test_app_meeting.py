@@ -58,6 +58,74 @@ class _FakeDialog:
         return True
 
 
+class _FakeButton(_FakeDialog):
+    def __init__(self):
+        self.options = {}
+        self.focused = False
+
+    def configure(self, **options):
+        self.options.update(options)
+
+    def focus_set(self):
+        self.focused = True
+
+
+class CopilotPreferenceTests(unittest.TestCase):
+    def test_copilot_opt_in_and_project_context_are_saved_as_preferences(self):
+        app = SimpleNamespace(
+            language_var=_FakeVariable("en"),
+            model_var=_FakeVariable("small.en"),
+            expected_speakers_var=_FakeVariable("Alex"),
+            retain=_FakeVariable(False),
+            include_timestamps=_FakeVariable(True),
+            open_after=_FakeVariable(True),
+            identify_speakers=_FakeVariable(False),
+            rename_source=_FakeVariable(True),
+            generate_copilot_summary=_FakeVariable(True),
+            summary_project_context_var=_FakeVariable("DIU; NexusGateway (Digi)"),
+        )
+        preferences = App._configuration_preferences(app)
+        self.assertTrue(preferences["generate_copilot_summary"])
+        self.assertEqual(preferences["summary_project_context"], "DIU; NexusGateway (Digi)")
+
+    @patch("transcriptforge.app.messagebox.showinfo")
+    def test_current_connection_result_reenables_button_and_returns_focus(self, showinfo):
+        owner = _FakeDialog()
+        button = _FakeButton()
+        app = SimpleNamespace(
+            copilot_validation_token=3,
+            copilot_dialog=owner,
+            copilot_status_var=_FakeVariable(),
+            copilot_test_button=button,
+            _window_title=lambda label: f"TranscriptForge - {label}",
+        )
+
+        App._finish_copilot_validation(app, (3, owner, (True, "Copilot ready")))
+
+        self.assertEqual(app.copilot_status_var.get(), "Copilot ready")
+        self.assertEqual(button.options["state"], "normal")
+        self.assertTrue(button.focused)
+        showinfo.assert_called_once_with(
+            "TranscriptForge - GitHub Copilot ready",
+            "Copilot ready",
+            parent=owner,
+        )
+
+    @patch("transcriptforge.app.messagebox.showinfo")
+    def test_stale_connection_result_is_ignored_after_dialog_closes(self, showinfo):
+        app = SimpleNamespace(
+            copilot_validation_token=4,
+            copilot_dialog=None,
+            copilot_status_var=_FakeVariable("Connection not checked"),
+            copilot_test_button=None,
+        )
+
+        App._finish_copilot_validation(app, (3, _FakeDialog(), (True, "Copilot ready")))
+
+        self.assertEqual(app.copilot_status_var.get(), "Connection not checked")
+        showinfo.assert_not_called()
+
+
 class ScheduledMeetingDialogTests(unittest.TestCase):
     def test_no_meeting_option_keeps_current_workflow_available(self):
         self.assertIn("No meeting selected", NO_MEETING_SELECTION)

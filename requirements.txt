@@ -5,3 +5,4 @@ imageio-ffmpeg>=0.5
 resemblyzer>=0.1.4
 pywin32>=306
 soundcard>=0.4.6
+github-copilot-sdk==1.0.22

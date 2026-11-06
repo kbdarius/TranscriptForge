@@ -39,6 +39,7 @@ _PACKAGE_DETAILS = {
     "resemblyzer": ("Optional local speaker identification", False, "resemblyzer"),
     "pywin32": ("Optional Python COM client for Outlook Classic; PowerShell fallback is available", False, "win32com"),
     "soundcard": ("Optional live system-audio recording", False, "soundcard"),
+    "github-copilot-sdk": ("Optional GitHub Copilot transcript summaries", False, "copilot"),
 }
 
 _NETWORK_FAILURE_MARKERS = (

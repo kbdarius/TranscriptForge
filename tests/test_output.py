@@ -10,6 +10,21 @@ class OutputTests(unittest.TestCase):
             path = Path(d) / "meeting.md"; content = render_markdown(Path("meeting.mp4"), "small.en", "en", 9.64, [Segment(0, 2.5, "Hello")], ProcessingStats(), Path(d) / "models"); atomic_write(path, content)
             rendered = path.read_text(encoding="utf-8"); self.assertIn("# Transcript: meeting.mp4", rendered); self.assertIn("[00:00:00.00 - 00:00:02.50] Hello", rendered); self.assertNotIn("## Processing Notes", rendered); self.assertFalse(list(Path(d).glob("*.tmp")))
 
+    def test_summary_is_rendered_before_metadata_and_transcript(self):
+        rendered = render_markdown(
+            Path("meeting.mp4"),
+            "small.en",
+            "en",
+            9.64,
+            [Segment(0, 2.5, "Hello")],
+            ProcessingStats(),
+            Path("models"),
+            summary="- **DIU:** Verification planning",
+        )
+        self.assertLess(rendered.index("## Summary"), rendered.index("**Generated:**"))
+        self.assertLess(rendered.index("## Summary"), rendered.index("## Transcript"))
+        self.assertIn("- **DIU:** Verification planning", rendered)
+
     def test_media_is_moved_to_match_transcript_stem(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); source = root / "original.mp4"; output = root / "Meeting Notes.md"; source.write_bytes(b"media")

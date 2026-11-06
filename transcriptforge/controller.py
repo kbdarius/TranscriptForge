@@ -2,6 +2,7 @@ import threading
 from pathlib import Path
 
 from .audio import read_wav
+from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT
 from .media import decode_to_wav, temporary_work_dir
 from .models_cache import cache_dir, load_model
 from .output import atomic_write, rename_media_to_match_output, render_markdown
@@ -19,16 +20,39 @@ def _review_speaker_names(profile_store, expected_speakers, additional_names=())
 
 
 class TranscriptionController:
-    def __init__(self, callback=None):
-        self.callback = callback or (lambda kind, value: None); self.cancel_event = threading.Event(); self.review_event = threading.Event(); self.transcription_ready_event = threading.Event(); self.speaker_names = {}; self.speaker_learning = {}; self.thread = None; self.pending_output = None; self.pending_rename_source = True; self.pending_overwrite_media = False
-    def cancel(self): self.cancel_event.set(); self.review_event.set(); self.transcription_ready_event.set()
+    def __init__(self, callback=None, summary_client_factory=CopilotSummaryClient):
+        self.callback = callback or (lambda kind, value: None); self.cancel_event = threading.Event(); self.review_event = threading.Event(); self.transcription_ready_event = threading.Event(); self.speaker_names = {}; self.speaker_learning = {}; self.thread = None; self.pending_output = None; self.pending_rename_source = True; self.pending_overwrite_media = False; self.summary_client_factory = summary_client_factory; self.summary_client = None
+    def cancel(self):
+        self.cancel_event.set(); self.review_event.set(); self.transcription_ready_event.set()
+        if self.summary_client is not None: self.summary_client.cancel()
     def set_speaker_names(self, names: dict[str, str], learning: dict[str, bool] | None = None): self.speaker_names = dict(names); self.speaker_learning = dict(learning or {}); self.review_event.set()
     def set_output(self, output: Path, rename_source=True, overwrite_media=False): self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media
     def continue_transcription(self): self.transcription_ready_event.set()
-    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False, rename_source=True, overwrite_media=False, expected_speakers=None, max_speakers=None, meeting_selected=False):
-        self.cancel_event.clear(); self.review_event.clear(); self.transcription_ready_event.clear(); self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media; self.speaker_names = {}; self.speaker_learning = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers, max_speakers, meeting_selected), daemon=True); self.thread.start()
+    def _generate_summary(self, segments, project_context, meeting_title):
+        self._emit("status", "Creating optional GitHub Copilot summary")
+        self._emit("log", "Sending transcript text to GitHub Copilot for a short summary...")
+        self.summary_client = self.summary_client_factory()
+        try:
+            summary = self.summary_client.summarize(
+                segments,
+                meeting_title=meeting_title,
+                project_context=project_context,
+            )
+            if self.summary_client.last_summary_used_excerpt:
+                self._emit("log", "The transcript was long; Copilot summarized bounded excerpts from its start, middle, and end.")
+            self._emit("log", "Added GitHub Copilot summary to the transcript.")
+            return summary
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            self._emit("log", f"Warning: GitHub Copilot summary was skipped: {exc}")
+            return ""
+        finally:
+            self.summary_client = None
+    def start(self, source: Path, output: Path, model_name: str, language="en", retain_wav=False, include_timestamps=True, identify_speakers=False, rename_source=True, overwrite_media=False, expected_speakers=None, max_speakers=None, meeting_selected=False, generate_summary=False, summary_project_context=DEFAULT_PROJECT_CONTEXT, meeting_title=""):
+        self.cancel_event.clear(); self.review_event.clear(); self.transcription_ready_event.clear(); self.pending_output = output; self.pending_rename_source = rename_source; self.pending_overwrite_media = overwrite_media; self.speaker_names = {}; self.speaker_learning = {}; self.thread = threading.Thread(target=self._run, args=(source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers, max_speakers, meeting_selected, generate_summary, summary_project_context, meeting_title), daemon=True); self.thread.start()
     def _emit(self, kind, value=None): self.callback(kind, value)
-    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers, max_speakers, meeting_selected):
+    def _run(self, source, output, model_name, language, retain_wav, include_timestamps, identify_speakers, rename_source, overwrite_media, expected_speakers, max_speakers, meeting_selected, generate_summary, summary_project_context, meeting_title):
         try:
             with temporary_work_dir() as temp:
                 wav = decode_to_wav(source, Path(temp)); self._emit("status", "Decoded audio")
@@ -100,6 +124,11 @@ class TranscriptionController:
                     inferred = fill_unknown_speakers_from_neighbors(segments)
                     if inferred:
                         self._emit("log", f"Filled {inferred} short Unknown segment(s) from matching neighboring speakers.")
+                summary = ""
+                if generate_summary:
+                    summary = self._generate_summary(segments, summary_project_context, meeting_title)
+                    if self.cancel_event.is_set():
+                        raise InterruptedError("Transcription cancelled")
                 markdown_source = source
                 if rename_source:
                     try:
@@ -107,7 +136,7 @@ class TranscriptionController:
                         if markdown_source != source.resolve(): self._emit("log", f"Renamed source media before writing transcript: {markdown_source}")
                     except Exception as exc:
                         self._emit("log", f"Warning: source media could not be renamed before writing transcript: {exc}")
-                atomic_write(output, render_markdown(markdown_source, model_name, language, len(samples) / rate, segments, stats, cache_dir(), include_timestamps))
+                atomic_write(output, render_markdown(markdown_source, model_name, language, len(samples) / rate, segments, stats, cache_dir(), include_timestamps, summary))
                 if retain_wav: retained = output.with_suffix(".decoded.wav"); retained.write_bytes(wav.read_bytes()); self._emit("log", f"Retained intermediate WAV: {retained}")
             self._emit("done", output)
         except InterruptedError as exc: self._emit("cancelled", str(exc))

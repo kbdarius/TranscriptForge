@@ -18,6 +18,7 @@ if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
 from .controller import TranscriptionController
+from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT
 from .configuration import export_configuration, import_configuration
 from .media import SUPPORTED_EXTENSIONS
 from .models_cache import MODEL_NAMES, cache_dir, download_model, model_available
@@ -42,6 +43,7 @@ class App(tk.Tk):
         self.live_recording_folder_var = tk.StringVar(value=default_live_folder)
         self.live_recorder = None; self._capture_should_transcribe = False; self._capture_discard = False; self._close_after_capture = False; self._pending_live_transcription = False
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
+        self.generate_copilot_summary = tk.BooleanVar(value=False); self.summary_project_context_var = tk.StringVar(value=DEFAULT_PROJECT_CONTEXT); self.copilot_status_var = tk.StringVar(value="Connection not checked"); self.copilot_test_button = None; self.copilot_dialog = None; self.copilot_validation_token = 0
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_outlook_meetings)
         self.protocol("WM_DELETE_WINDOW", self._close_application)
     def _window_title(self, label):
@@ -342,14 +344,15 @@ class App(tk.Tk):
         base = re.sub(r"[-_]\d{8}$", "", stem).strip(" -_") or meeting.subject
         self.meeting_output_settings.remember(meeting.subject, folder, base)
     def _configuration_preferences(self):
-        return {"language": self.language_var.get(), "whisper_model": self.model_var.get(), "expected_speakers": self.expected_speakers_var.get(), "retain_wav": self.retain.get(), "include_timestamps": self.include_timestamps.get(), "open_after": self.open_after.get(), "identify_speakers": self.identify_speakers.get(), "rename_source": self.rename_source.get()}
+        return {"language": self.language_var.get(), "whisper_model": self.model_var.get(), "expected_speakers": self.expected_speakers_var.get(), "retain_wav": self.retain.get(), "include_timestamps": self.include_timestamps.get(), "open_after": self.open_after.get(), "identify_speakers": self.identify_speakers.get(), "rename_source": self.rename_source.get(), "generate_copilot_summary": self.generate_copilot_summary.get(), "summary_project_context": self.summary_project_context_var.get()}
 
     def _load_preferences(self):
         preferences = PreferencesSettings().values
         if isinstance(preferences.get("language"), str): self.language_var.set(preferences["language"])
         if preferences.get("whisper_model") in MODEL_NAMES: self.model_var.set(preferences["whisper_model"])
         if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
-        for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source)):
+        if isinstance(preferences.get("summary_project_context"), str): self.summary_project_context_var.set(preferences["summary_project_context"])
+        for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source), ("generate_copilot_summary", self.generate_copilot_summary)):
             if isinstance(preferences.get(key), bool): variable.set(preferences[key])
 
     def _save_preferences(self):
@@ -359,7 +362,9 @@ class App(tk.Tk):
         if not path:
             return
         try:
-            export_configuration(Path(path), self._configuration_preferences(), self.filename_templates.names)
+            portable_preferences = self._configuration_preferences()
+            portable_preferences["generate_copilot_summary"] = False
+            export_configuration(Path(path), portable_preferences, self.filename_templates.names)
             self._write_log(f"Exported portable configuration: {path}")
             messagebox.showinfo(self._window_title("Configuration exported"), "Transfer this .tfconfig file to the other PC, then use Import configuration there.", parent=self)
         except (OSError, ValueError) as exc:
@@ -377,6 +382,7 @@ class App(tk.Tk):
                 if isinstance(preferences.get("language"), str): self.language_var.set(preferences["language"])
                 if preferences.get("whisper_model") in MODEL_NAMES: self.model_var.set(preferences["whisper_model"])
                 if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
+                if isinstance(preferences.get("summary_project_context"), str): self.summary_project_context_var.set(preferences["summary_project_context"])
                 for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source)):
                     if isinstance(preferences.get(key), bool): variable.set(preferences[key])
             self.filename_templates.load(); self._save_preferences()
@@ -389,8 +395,14 @@ class App(tk.Tk):
         frame = ttk.Frame(dialog, padding=14); frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Optional features", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", pady=(0, 8))
         ttk.Label(frame, text="These settings apply to the next transcription.", wraplength=420).pack(anchor="w", pady=(0, 8))
-        ttk.Label(frame, text="Language").pack(anchor="w"); ttk.Entry(frame, textvariable=self.language_var, width=12).pack(anchor="w", pady=(2, 8))
+        ttk.Label(frame, text="Language").pack(anchor="w"); language_entry = ttk.Entry(frame, textvariable=self.language_var, width=12); language_entry.pack(anchor="w", pady=(2, 8))
         ttk.Label(frame, text="Expected speakers (optional, comma-separated)").pack(anchor="w"); ttk.Entry(frame, textvariable=self.expected_speakers_var, width=42).pack(anchor="w", pady=(2, 8))
+        copilot_settings_button = ttk.Button(
+            frame,
+            text="Configure GitHub Copilot summary...",
+            command=lambda: self._open_copilot_summary_settings(dialog, copilot_settings_button),
+        )
+        copilot_settings_button.pack(anchor="w", pady=(2, 8))
         live_recording = ttk.LabelFrame(frame, text="Live system audio recording", padding=8)
         live_recording.pack(fill="x", pady=(4, 8))
         ttk.Label(
@@ -450,8 +462,104 @@ class App(tk.Tk):
         controls = ttk.Frame(frame); controls.pack(fill="x", pady=(14, 0)); ttk.Button(controls, text="Manage profiles", command=self._manage_profiles).pack(side="left"); ttk.Button(controls, text="View history", command=self._show_history).pack(side="left", padx=6)
         def close_setup():
             if self._save_live_recording_settings(dialog):
-                self._save_preferences(); dialog.grab_release(); dialog.destroy()
-        ttk.Button(controls, text="Close", command=close_setup).pack(side="right")
+                self._save_preferences(); self.copilot_validation_token += 1; dialog.grab_release(); dialog.destroy(); self.setup_button.focus_set()
+        close_button = ttk.Button(controls, text="Close", command=close_setup); close_button.pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", close_setup)
+        dialog.bind("<Escape>", lambda _event: close_setup())
+        dialog.after_idle(language_entry.focus_set)
+
+    def _open_copilot_summary_settings(self, parent, return_focus):
+        existing = self.copilot_dialog
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift(); existing.focus_force(); return
+            except tk.TclError:
+                self.copilot_dialog = None
+        dialog = tk.Toplevel(parent); self.copilot_dialog = dialog
+        dialog.title(self._window_title("GitHub Copilot summary")); dialog.transient(parent); dialog.resizable(True, False)
+        frame = ttk.Frame(dialog, padding=14); frame.pack(fill="both", expand=True)
+        summary_checkbox = ttk.Checkbutton(
+            frame,
+            text="Add a short Copilot summary to the top of each transcript",
+            variable=self.generate_copilot_summary,
+        )
+        summary_checkbox.pack(anchor="w")
+        ttk.Label(
+            frame,
+            text="When enabled, the meeting title, speaker names, and transcript text are sent to GitHub Copilot. Audio, file paths, and voice profiles stay local.",
+            wraplength=560,
+        ).pack(anchor="w", pady=(6, 10))
+        project_label = ttk.Label(frame, text="Weekly-report projects and aliases")
+        project_label.pack(anchor="w")
+        project_entry = ttk.Entry(frame, textvariable=self.summary_project_context_var, width=72, takefocus=True)
+        project_entry.pack(fill="x", pady=(2, 8))
+        copilot_controls = ttk.Frame(frame); copilot_controls.pack(fill="x")
+        self.copilot_test_button = ttk.Button(
+            copilot_controls,
+            text="Test Copilot connection",
+            command=lambda: self._test_copilot_connection(dialog),
+        )
+        self.copilot_test_button.pack(side="left")
+        ttk.Label(copilot_controls, textvariable=self.copilot_status_var, wraplength=390).pack(side="left", padx=(8, 0))
+
+        def close_dialog():
+            self.copilot_validation_token += 1
+            self.copilot_test_button = None
+            self.copilot_dialog = None
+            try: dialog.grab_release()
+            except tk.TclError: pass
+            dialog.destroy()
+            try: parent.grab_set(); return_focus.focus_set()
+            except tk.TclError: pass
+
+        close_button = ttk.Button(frame, text="Close", command=close_dialog)
+        close_button.pack(anchor="e", pady=(14, 0))
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+        dialog.bind("<Escape>", lambda _event: close_dialog())
+        dialog.bind("<Alt-w>", lambda _event: project_entry.focus_set())
+        dialog.grab_set()
+        dialog.after_idle(summary_checkbox.focus_set)
+
+    def _test_copilot_connection(self, owner):
+        button = self.copilot_test_button
+        if button is None:
+            return
+        self.copilot_validation_token += 1
+        token = self.copilot_validation_token
+        button.configure(state="disabled")
+        self.copilot_status_var.set("Checking sign-in and model availability...")
+
+        def worker():
+            result = CopilotSummaryClient().validate_connection()
+            self.events.put(("copilot_validation", (token, owner, result)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_copilot_validation(self, payload):
+        token, owner, result = payload
+        if token != self.copilot_validation_token:
+            return
+        try:
+            if not owner.winfo_exists() or owner is not self.copilot_dialog:
+                return
+        except tk.TclError:
+            return
+        success, message = result
+        self.copilot_status_var.set(message)
+        button = self.copilot_test_button
+        if button is not None:
+            try:
+                if button.winfo_exists():
+                    button.configure(state="normal")
+            except tk.TclError:
+                self.copilot_test_button = None
+        title = "GitHub Copilot ready" if success else "GitHub Copilot unavailable"
+        show = messagebox.showinfo if success else messagebox.showwarning
+        show(self._window_title(title), message, parent=owner)
+        if button is not None:
+            try: button.focus_set()
+            except tk.TclError: pass
 
     def _save_live_recording_settings(self, parent=None):
         folder = self.live_recording_folder_var.get().strip()
@@ -1018,7 +1126,7 @@ class App(tk.Tk):
         identify_speakers = self.identify_speakers.get() or meeting is not None or max_speakers is not None
         if identify_speakers and not self.identify_speakers.get():
             self._write_log("Speaker identification is enabled for this recording because a meeting or speaker limit was selected.")
-        self.active_source = source; self.active_output = output; self.active_meeting = meeting; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), identify_speakers, self.rename_source.get(), self.rename_overwrite, expected_speakers, max_speakers, meeting is not None)
+        self.active_source = source; self.active_output = output; self.active_meeting = meeting; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), identify_speakers, self.rename_source.get(), self.rename_overwrite, expected_speakers, max_speakers, meeting is not None, self.generate_copilot_summary.get(), self.summary_project_context_var.get(), meeting.subject if meeting is not None else "")
 
     @staticmethod
     def _outlook_speaker_names(meeting):
@@ -1492,6 +1600,7 @@ class App(tk.Tk):
                 elif kind == "status": self.status_var.set(value)
                 elif kind == "log": self._write_log(str(value))
                 elif kind == "model_ready": self._update_model_button()
+                elif kind == "copilot_validation": self._finish_copilot_validation(value)
                 elif kind == "outlook_meetings": self._set_outlook_meetings(value); self._maybe_start_pending_live_transcription()
                 elif kind == "outlook_error":
                     self.outlook_loading = False; self.outlook_ready = True; self.refresh_meetings_button.configure(state="normal"); self.outlook_date_button.configure(state="normal")

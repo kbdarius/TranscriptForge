@@ -34,8 +34,11 @@ def timestamp(seconds: float) -> str:
     h, whole = divmod(whole, 3600); m, s = divmod(whole, 60)
     return f"{h:02d}:{m:02d}:{s:02d}.{fraction:02d}"
 
-def render_markdown(source: Path, model: str, language: str, duration: float, segments: list[Segment], stats: ProcessingStats, cache: Path, include_timestamps: bool = True) -> str:
-    lines = [f"# Transcript: {source.name}", "", f"**Generated:** {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}  ", f"**Source:** `{source}`  ", f"**Model:** `{model}`  ", f"**Language:** `{language}`  ", f"**Duration:** `{timestamp(duration)}`", "", "## Transcript", ""]
+def render_markdown(source: Path, model: str, language: str, duration: float, segments: list[Segment], stats: ProcessingStats, cache: Path, include_timestamps: bool = True, summary: str = "") -> str:
+    lines = [f"# Transcript: {source.name}", ""]
+    if summary.strip():
+        lines.extend(["## Summary", "", summary.strip(), ""])
+    lines.extend([f"**Generated:** {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}  ", f"**Source:** `{source}`  ", f"**Model:** `{model}`  ", f"**Language:** `{language}`  ", f"**Duration:** `{timestamp(duration)}`", "", "## Transcript", ""])
     lines.extend((f"[{timestamp(s.start)} - {timestamp(s.end)}] " if include_timestamps else "") + (f"{s.speaker}: " if s.speaker else "") + s.text.strip() for s in segments if s.text.strip())
     return "\n".join(lines) + "\n"
 

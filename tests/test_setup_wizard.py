@@ -29,9 +29,10 @@ class SetupWizardTests(unittest.TestCase):
         )
         self.assertEqual(
             {name for name, spec in by_name.items() if not spec.required},
-            {"resemblyzer", "pywin32", "soundcard"},
+            {"resemblyzer", "pywin32", "soundcard", "github-copilot-sdk"},
         )
         self.assertEqual(by_name["resemblyzer"].import_name, "resemblyzer")
+        self.assertEqual(by_name["github-copilot-sdk"].import_name, "copilot")
 
     def test_requirement_name_parser_handles_extras_and_markers(self):
         self.assertEqual(parse_requirement_name("sample_package[extra]>=1.2; python_version > '3.10'"), "sample_package")
