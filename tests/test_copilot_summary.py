@@ -15,10 +15,11 @@ from transcriptforge.models import Segment
 
 
 class FakeSession:
-    def __init__(self, response_text="- **DIU:** Verification planning", started=None, wait=False):
+    def __init__(self, response_text="- **DIU:** Verification planning", started=None, wait=False, response_model=None):
         self.response_text = response_text
         self.started = started
         self.wait = wait
+        self.response_model = response_model
         self.prompt = ""
         self.timeout = None
 
@@ -35,19 +36,19 @@ class FakeSession:
             self.started.set()
         if self.wait:
             await asyncio.Event().wait()
-        return SimpleNamespace(data=SimpleNamespace(content=self.response_text))
+        return SimpleNamespace(data=SimpleNamespace(content=self.response_text, model=self.response_model))
 
 
 class FakeClient:
-    def __init__(self, authenticated=True, response_text=None, models=None, started=None, wait=False):
+    def __init__(self, authenticated=True, response_text=None, models=None, started=None, wait=False, response_model=None):
         self.auth_status = SimpleNamespace(
             isAuthenticated=authenticated,
             statusMessage="Not signed in" if not authenticated else "",
         )
         self.models = models if models is not None else [
-            SimpleNamespace(id=MODEL_ID, supported_reasoning_efforts=[REASONING_EFFORT])
+            SimpleNamespace(id=MODEL_ID, name="Auto", supported_reasoning_efforts=[REASONING_EFFORT])
         ]
-        self.session = FakeSession(response_text or "- **DIU:** Verification planning", started, wait)
+        self.session = FakeSession(response_text or "- **DIU:** Verification planning", started, wait, response_model)
         self.session_options = None
         self.session_creation_count = 0
 
@@ -90,6 +91,33 @@ class CopilotSummaryTests(unittest.TestCase):
         self.assertIn("Known weekly-report projects and aliases: DIU; BESS", client.session.prompt)
         self.assertIn("Alex: Reviewed the DIU verification procedure", client.session.prompt)
 
+    def test_selected_model_is_sent_and_reported_model_is_recorded(self):
+        client = FakeClient(response_model="gpt-routed")
+        summary_client = CopilotSummaryClient(lambda: client, model_id="gpt-selected")
+
+        summary_client.summarize([Segment(0, 1, "Discussion")])
+
+        self.assertEqual(client.session_options["model"], "gpt-selected")
+        self.assertEqual(summary_client.last_model_used, "gpt-routed")
+
+    def test_model_scan_returns_ids_and_names_without_creating_a_session(self):
+        client = FakeClient(models=[
+            SimpleNamespace(id="auto", name="Auto"),
+            SimpleNamespace(id="", name="Malformed"),
+            SimpleNamespace(id="gpt-test", name="GPT Test"),
+            SimpleNamespace(id="gpt-test", name="Duplicate"),
+        ])
+
+        models = CopilotSummaryClient(lambda: client).list_available_models()
+
+        self.assertEqual([(model.id, model.name) for model in models], [("auto", "Auto"), ("gpt-test", "GPT Test")])
+        self.assertEqual(models[1].display_name, "GPT Test (gpt-test)")
+        self.assertEqual(client.session_creation_count, 0)
+
+    def test_model_scan_rejects_an_empty_model_list(self):
+        with self.assertRaisesRegex(RuntimeError, "no available models"):
+            CopilotSummaryClient(lambda: FakeClient(models=[])).list_available_models()
+
     def test_connection_check_sends_no_model_request(self):
         client = FakeClient()
         success, message = CopilotSummaryClient(lambda: client).validate_connection()
@@ -102,6 +130,13 @@ class CopilotSummaryTests(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("Sign in", message)
         self.assertIn("copilot", message.lower())
+
+    def test_connection_check_reports_when_selected_model_is_unavailable(self):
+        client = FakeClient(models=[SimpleNamespace(id="auto", name="Auto")])
+        success, message = CopilotSummaryClient(lambda: client, model_id="missing-model").validate_connection()
+        self.assertFalse(success)
+        self.assertIn("missing-model", message)
+        self.assertIn("Scan", message)
 
     def test_cancel_interrupts_active_summary(self):
         started = threading.Event()
@@ -123,6 +158,16 @@ class CopilotSummaryTests(unittest.TestCase):
         worker.join(timeout=5)
         self.assertFalse(worker.is_alive())
         self.assertIsInstance(result["error"], InterruptedError)
+
+    def test_cancel_before_request_prevents_session_creation(self):
+        client = FakeClient()
+        summary_client = CopilotSummaryClient(lambda: client)
+        summary_client.cancel()
+
+        with self.assertRaises(InterruptedError):
+            summary_client.summarize([Segment(0, 1, "Discussion")])
+
+        self.assertEqual(client.session_creation_count, 0)
 
     @staticmethod
     def _capture_error(operation):

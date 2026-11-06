@@ -4,10 +4,11 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from types import MethodType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from transcriptforge.app import App, NO_MEETING_SELECTION
 from transcriptforge.controller import _review_speaker_names
+from transcriptforge.copilot_summary import CopilotModelOption
 from transcriptforge.outlook_calendar import OutlookMeeting
 from transcriptforge.speakers import SpeakerProfileStore
 
@@ -71,6 +72,20 @@ class _FakeButton(_FakeDialog):
 
 
 class CopilotPreferenceTests(unittest.TestCase):
+    def test_application_close_cancels_active_copilot_request(self):
+        request_client = SimpleNamespace(cancel=Mock())
+        app = SimpleNamespace(
+            live_recorder=None,
+            copilot_request_client=request_client,
+            destroy=Mock(),
+        )
+
+        App._close_application(app)
+
+        request_client.cancel.assert_called_once_with()
+        self.assertIsNone(app.copilot_request_client)
+        app.destroy.assert_called_once_with()
+
     def test_copilot_opt_in_and_project_context_are_saved_as_preferences(self):
         app = SimpleNamespace(
             language_var=_FakeVariable("en"),
@@ -83,13 +98,15 @@ class CopilotPreferenceTests(unittest.TestCase):
             rename_source=_FakeVariable(True),
             generate_copilot_summary=_FakeVariable(True),
             summary_project_context_var=_FakeVariable("DIU; NexusGateway (Digi)"),
+            copilot_model_var=_FakeVariable("gpt-test"),
         )
         preferences = App._configuration_preferences(app)
         self.assertTrue(preferences["generate_copilot_summary"])
         self.assertEqual(preferences["summary_project_context"], "DIU; NexusGateway (Digi)")
+        self.assertEqual(preferences["summary_model_id"], "gpt-test")
 
     @patch("transcriptforge.app.messagebox.showinfo")
-    def test_current_connection_result_reenables_button_and_returns_focus(self, showinfo):
+    def test_current_connection_result_reenables_button_without_forcing_focus(self, showinfo):
         owner = _FakeDialog()
         button = _FakeButton()
         app = SimpleNamespace(
@@ -97,6 +114,8 @@ class CopilotPreferenceTests(unittest.TestCase):
             copilot_dialog=owner,
             copilot_status_var=_FakeVariable(),
             copilot_test_button=button,
+            copilot_scan_button=None,
+            copilot_request_client=SimpleNamespace(),
             _window_title=lambda label: f"TranscriptForge - {label}",
         )
 
@@ -104,12 +123,56 @@ class CopilotPreferenceTests(unittest.TestCase):
 
         self.assertEqual(app.copilot_status_var.get(), "Copilot ready")
         self.assertEqual(button.options["state"], "normal")
-        self.assertTrue(button.focused)
+        self.assertFalse(button.focused)
         showinfo.assert_called_once_with(
             "TranscriptForge - GitHub Copilot ready",
             "Copilot ready",
             parent=owner,
         )
+
+    @patch("transcriptforge.app.messagebox.showinfo")
+    def test_model_scan_populates_ids_and_keeps_available_selection(self, showinfo):
+        owner = _FakeDialog()
+        combo = _FakeCombo("gpt-test")
+        scan_button = _FakeButton()
+        test_button = _FakeButton()
+        app = SimpleNamespace(
+            copilot_validation_token=7,
+            copilot_dialog=owner,
+            copilot_status_var=_FakeVariable(),
+            copilot_model_var=_FakeVariable("gpt-test"),
+            copilot_model_display_var=_FakeVariable("gpt-test"),
+            copilot_model_ids_by_label={"gpt-test": "gpt-test"},
+            copilot_model_combo=combo,
+            copilot_scan_button=scan_button,
+            copilot_test_button=test_button,
+            copilot_request_client=SimpleNamespace(),
+            _window_title=lambda label: f"TranscriptForge - {label}",
+        )
+        models = [CopilotModelOption("auto", "Auto"), CopilotModelOption("gpt-test", "GPT Test")]
+
+        App._finish_copilot_model_scan(app, (7, owner, (True, models, "Found 2 available Copilot model(s).")))
+
+        self.assertEqual(combo.values, ["Copilot Auto", "GPT Test (gpt-test)"])
+        self.assertEqual(app.copilot_model_var.get(), "gpt-test")
+        self.assertEqual(app.copilot_model_display_var.get(), "GPT Test (gpt-test)")
+        self.assertFalse(combo.focused)
+        self.assertIsNone(app.copilot_request_client)
+        self.assertIn("GPT Test", app.copilot_status_var.get())
+        showinfo.assert_called_once()
+
+    def test_model_display_selection_updates_the_persisted_model_id(self):
+        app = SimpleNamespace(
+            copilot_model_display_var=_FakeVariable("GPT Test (gpt-test)"),
+            copilot_model_ids_by_label={"GPT Test (gpt-test)": "gpt-test"},
+            copilot_model_var=_FakeVariable("auto"),
+            copilot_status_var=_FakeVariable(),
+        )
+
+        App._select_copilot_model(app)
+
+        self.assertEqual(app.copilot_model_var.get(), "gpt-test")
+        self.assertIn("GPT Test", app.copilot_status_var.get())
 
     @patch("transcriptforge.app.messagebox.showinfo")
     def test_stale_connection_result_is_ignored_after_dialog_closes(self, showinfo):
@@ -118,11 +181,28 @@ class CopilotPreferenceTests(unittest.TestCase):
             copilot_dialog=None,
             copilot_status_var=_FakeVariable("Connection not checked"),
             copilot_test_button=None,
+            copilot_request_client=None,
         )
 
         App._finish_copilot_validation(app, (3, _FakeDialog(), (True, "Copilot ready")))
 
         self.assertEqual(app.copilot_status_var.get(), "Connection not checked")
+        showinfo.assert_not_called()
+
+    @patch("transcriptforge.app.messagebox.showinfo")
+    def test_stale_model_scan_does_not_replace_a_newer_request(self, showinfo):
+        newer_request = object()
+        app = SimpleNamespace(
+            copilot_validation_token=4,
+            copilot_dialog=_FakeDialog(),
+            copilot_status_var=_FakeVariable("Scanning"),
+            copilot_request_client=newer_request,
+        )
+
+        App._finish_copilot_model_scan(app, (3, _FakeDialog(), (True, [], "Old result")))
+
+        self.assertIs(app.copilot_request_client, newer_request)
+        self.assertEqual(app.copilot_status_var.get(), "Scanning")
         showinfo.assert_not_called()
 
 

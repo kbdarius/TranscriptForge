@@ -6,6 +6,7 @@ import asyncio
 import re
 import threading
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 from .models import Segment
@@ -27,6 +28,20 @@ SIGN_IN_GUIDE_URL = "https://github.com/github/copilot-sdk/blob/main/docs/auth/a
 
 _Result = TypeVar("_Result")
 _BULLET_PREFIX = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)")
+
+
+@dataclass(frozen=True)
+class CopilotModelOption:
+    """A model currently available to the signed-in Copilot account."""
+
+    id: str
+    name: str
+
+    @property
+    def display_name(self) -> str:
+        if self.id == MODEL_ID:
+            return MODEL_NAME
+        return f"{self.name} ({self.id})" if self.name != self.id else self.id
 
 
 def _segment_line(segment: Segment) -> str:
@@ -120,11 +135,19 @@ def normalize_summary(response_text: str, maximum_bullets: int = 6) -> str:
 class CopilotSummaryClient:
     """Create isolated, tool-free summary requests with the signed-in GitHub account."""
 
-    def __init__(self, client_factory: Callable[[], CopilotClient] | None = None):
+    def __init__(
+        self,
+        client_factory: Callable[[], CopilotClient] | None = None,
+        *,
+        model_id: str = MODEL_ID,
+    ):
         self._client_factory = client_factory
+        self.model_id = model_id.strip() or MODEL_ID
         self._active_tasks: set[tuple[asyncio.AbstractEventLoop, asyncio.Task]] = set()
         self._active_tasks_lock = threading.Lock()
+        self._cancel_requested = threading.Event()
         self.last_summary_used_excerpt = False
+        self.last_model_used = ""
 
     def _create_client(self) -> CopilotClient:
         if self._client_factory is not None:
@@ -139,6 +162,8 @@ class CopilotSummaryClient:
         return CopilotClient(use_logged_in_user=True)
 
     def _run_async(self, operation: Callable[[], Awaitable[_Result]]) -> _Result:
+        if self._cancel_requested.is_set():
+            raise InterruptedError("GitHub Copilot request cancelled")
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -154,6 +179,8 @@ class CopilotSummaryClient:
             active_task = (loop, task)
             with self._active_tasks_lock:
                 self._active_tasks.add(active_task)
+            if self._cancel_requested.is_set():
+                task.cancel()
             try:
                 return await operation()
             finally:
@@ -178,6 +205,36 @@ class CopilotSummaryClient:
             models = await client.list_models() if getattr(auth_status, "isAuthenticated", False) else []
             return auth_status, models
 
+    def list_available_models(self) -> list[CopilotModelOption]:
+        """Return the models GitHub currently exposes to this signed-in account."""
+        try:
+            auth_status, models = self._run_async(
+                lambda: asyncio.wait_for(
+                    self._connection_status(),
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+            )
+        except asyncio.CancelledError as exc:
+            raise InterruptedError("GitHub Copilot model scan was cancelled") from exc
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"Could not scan GitHub Copilot models: {exc}") from exc
+        if not getattr(auth_status, "isAuthenticated", False):
+            raise RuntimeError(self._authentication_message(auth_status))
+        options = []
+        seen_model_ids = set()
+        for model in models:
+            model_id = str(getattr(model, "id", "")).strip()
+            if not model_id or model_id in seen_model_ids:
+                continue
+            seen_model_ids.add(model_id)
+            model_name = str(getattr(model, "name", "") or model_id).strip() or model_id
+            options.append(CopilotModelOption(id=model_id, name=model_name))
+        if not options:
+            raise RuntimeError("GitHub Copilot returned no available models for this account.")
+        return options
+
     def validate_connection(self) -> tuple[bool, str]:
         """Check authentication and model availability without sending transcript text."""
         try:
@@ -189,25 +246,31 @@ class CopilotSummaryClient:
             )
         except asyncio.CancelledError:
             return False, "GitHub Copilot sign-in check was cancelled."
+        except InterruptedError:
+            return False, "GitHub Copilot sign-in check was cancelled."
         except Exception as exc:
             return False, f"Could not start or check GitHub Copilot: {exc}"
         if not getattr(auth_status, "isAuthenticated", False):
             return False, self._authentication_message(auth_status)
-        model = next((item for item in models if getattr(item, "id", None) == MODEL_ID), None)
+        model = next((item for item in models if getattr(item, "id", None) == self.model_id), None)
         if model is None:
-            return False, f"{MODEL_NAME} is not available for this signed-in Copilot account."
+            return False, f"The selected Copilot model '{self.model_id}' is not available for this signed-in account. Scan the available models and choose another."
+        model_name = CopilotModelOption(
+            id=self.model_id,
+            name=str(getattr(model, "name", "") or self.model_id),
+        ).display_name
         efforts = getattr(model, "supported_reasoning_efforts", None)
         if REASONING_EFFORT is not None and efforts is not None and REASONING_EFFORT not in efforts:
-            return False, f"{MODEL_NAME} does not list {REASONING_EFFORT} reasoning for this account."
-        return True, f"GitHub Copilot is signed in and {MODEL_NAME} is available. No transcript was sent."
+            return False, f"{model_name} does not list {REASONING_EFFORT} reasoning for this account."
+        return True, f"GitHub Copilot is signed in and {model_name} is available. No transcript was sent."
 
-    async def _send_request(self, system_message: str, prompt: str) -> str:
+    async def _send_request(self, system_message: str, prompt: str) -> tuple[str, str]:
         async with self._create_client() as client:
             auth_status = await client.get_auth_status()
             if not getattr(auth_status, "isAuthenticated", False):
                 raise RuntimeError(self._authentication_message(auth_status))
             session_options = dict(
-                model=MODEL_ID,
+                model=self.model_id,
                 available_tools=[],
                 enable_config_discovery=False,
                 enable_session_telemetry=False,
@@ -224,10 +287,12 @@ class CopilotSummaryClient:
                 session_options["reasoning_effort"] = REASONING_EFFORT
             async with await client.create_session(**session_options) as session:
                 response = await session.send_and_wait(prompt, timeout=REQUEST_TIMEOUT_SECONDS)
-        content = getattr(getattr(response, "data", None), "content", None)
+        response_data = getattr(response, "data", None)
+        content = getattr(response_data, "content", None)
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("GitHub Copilot returned no summary text.")
-        return content
+        actual_model = str(getattr(response_data, "model", "") or self.model_id).strip()
+        return content, actual_model
 
     def summarize(
         self,
@@ -256,7 +321,7 @@ class CopilotSummaryClient:
             f"{transcript}"
         )
         try:
-            response = self._run_async(
+            response, actual_model = self._run_async(
                 lambda: asyncio.wait_for(
                     self._send_request(system_message, prompt),
                     timeout=REQUEST_TIMEOUT_SECONDS,
@@ -264,12 +329,14 @@ class CopilotSummaryClient:
             )
         except asyncio.CancelledError as exc:
             raise InterruptedError("GitHub Copilot summary cancelled") from exc
+        self.last_model_used = actual_model
         summary = normalize_summary(response)
         if not summary:
             raise RuntimeError("GitHub Copilot returned a summary that contained no usable bullet points.")
         return summary
 
     def cancel(self) -> None:
+        self._cancel_requested.set()
         with self._active_tasks_lock:
             tasks = tuple(self._active_tasks)
         for loop, task in tasks:

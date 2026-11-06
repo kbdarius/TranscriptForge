@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.9.0"
+  version: "1.10.0"
   status: "current"
   created_date: "2026-09-25"
   last_updated: "2026-11-06"
   target_root: 'D:\OneDrive\OneDrive - stryten.com\Code\Other\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.9.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Updated 2026-11-06 from the working tree at application version 0.29.0; includes optional GitHub Copilot transcript summaries with editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
+    value: "Updated 2026-11-06 from the working tree at application version 0.30.0; includes account-aware GitHub Copilot model scanning and selection, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.29.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.30.0; verify claims against current source and tests after later changes."
     - "GitHub Copilot availability depends on local SDK installation, Copilot CLI sign-in, plan allowance, network access, model rollout, and organization policy."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
@@ -193,6 +193,8 @@ project_components:
       - "Network, plan, model, and organization-policy availability"
     constraints:
       - "The option defaults off and exported portable configurations reset it to off."
+      - "The user can scan the models currently exposed to the signed-in account without sending transcript text, persist a stable model ID, and test that selected model before transcription."
+      - "Copilot Auto remains the default; the activity log records the actual model reported by GitHub after a successful summary."
       - "Only meeting title, speaker names, editable project aliases, and transcript text are sent; audio, file paths, voice profiles, tools, workspace context, and session storage remain unavailable to the request."
       - "Long transcripts use bounded excerpts from the start, middle, and end, and summary failure never blocks Markdown transcript creation."
 
@@ -241,6 +243,7 @@ system_or_information_flow:
     - "Optional appointments and invitees read from the local Outlook Classic default calendar."
     - "Optional live audio from the default Windows playback endpoint through WASAPI loopback."
     - "Optional editable weekly-report project names and aliases used only as Copilot summary context."
+    - "Optional GitHub Copilot model ID selected from a live account-specific model scan."
   processing_or_workflow:
     - "transcriptforge/media.py invokes the FFmpeg executable supplied by imageio-ffmpeg to create temporary mono 16 kHz PCM audio."
     - "transcriptforge/audio.py reads samples for local speech and speaker processing."
@@ -248,7 +251,8 @@ system_or_information_flow:
     - "transcriptforge/speakers.py optionally analyzes voice intervals and uses reviewed identities and local profiles."
     - "transcriptforge/transcription.py sends audio samples to the cached local Whisper model and retries suspect ranges."
     - "transcriptforge/output.py renders and atomically writes the Markdown transcript."
-    - "When explicitly enabled, an isolated tool-free Copilot session receives the meeting title, speaker labels, project aliases, and bounded transcript text; normalized bullets are prepended when successful, otherwise transcript creation continues without them."
+    - "The Copilot settings dialog can scan account-available models without transcript content, saves the selected stable model ID, and tests availability before transcription."
+    - "When explicitly enabled, an isolated tool-free Copilot session uses the selected model and receives the meeting title, speaker labels, project aliases, and bounded transcript text; normalized bullets are prepended when successful, the reported model is logged, and otherwise transcript creation continues without them."
   outputs:
     - "A timestamped Markdown transcript in the selected output location."
     - "A local WAV recording when live system-audio capture is used."
@@ -259,7 +263,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.9.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -314,7 +318,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.9.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -622,6 +626,17 @@ constraints_and_known_issues:
 
 recent_changes_summary:
   - date: "2026-11-06"
+    description: "Added live GitHub Copilot model discovery and selection, persistent stable model IDs, selected-model validation, actual-model logging, and cancellation-safe background requests."
+    affected_areas:
+      - "transcriptforge/copilot_summary.py"
+      - "transcriptforge/controller.py"
+      - "transcriptforge/app.py"
+      - "transcriptforge/cli.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - "tests/"
+    evidence: "Automated tests, live account model scan without transcript content, and source review for application version 0.30.0."
+  - date: "2026-11-06"
     description: "Added opt-in GitHub Copilot meeting summaries with editable weekly-project aliases, secure tool-free SDK sessions, bounded transcript excerpts, explicit privacy disclosure, GUI connection testing, CLI parity, and non-blocking fallback."
     affected_areas:
       - "transcriptforge/copilot_summary.py"
@@ -749,7 +764,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.9.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

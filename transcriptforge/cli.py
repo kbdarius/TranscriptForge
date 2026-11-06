@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .audio import read_wav
 from .configuration import export_configuration, import_configuration
-from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT
+from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT, MODEL_ID
 from .media import SUPPORTED_EXTENSIONS, decode_to_wav, temporary_work_dir
 from .models_cache import MODEL_NAMES, cache_dir, download_model, load_model, model_available
 from .output import atomic_write, render_markdown
@@ -134,7 +134,7 @@ def _transcribe(args) -> int:
             if args.copilot_summary:
                 _emit(args.json_events, "stage", message="Creating optional GitHub Copilot summary")
                 try:
-                    summary_client = CopilotSummaryClient()
+                    summary_client = CopilotSummaryClient(model_id=args.summary_model)
                     summary = summary_client.summarize(
                         segments,
                         meeting_title=args.meeting_title,
@@ -142,6 +142,8 @@ def _transcribe(args) -> int:
                     )
                     if summary_client.last_summary_used_excerpt:
                         _emit(args.json_events, "log", message="The transcript was long; Copilot summarized bounded excerpts from its start, middle, and end.")
+                    actual_model = summary_client.last_model_used or args.summary_model
+                    _emit(args.json_events, "log", message=f"GitHub Copilot summary used model '{actual_model}'.")
                 except Exception as exc:
                     _emit(args.json_events, "log", message=f"Warning: GitHub Copilot summary was skipped: {exc}")
             atomic_write(output, render_markdown(source, args.model, args.language, len(samples) / rate, segments, stats, cache_dir(), not args.no_timestamps, summary))
@@ -225,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json-events", action="store_true", help="Emit newline-delimited JSON events for automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
     transcribe = subparsers.add_parser("transcribe", help="Transcribe a local media file")
-    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true"); transcribe.add_argument("--copilot-summary", action="store_true", help="Send transcript text to GitHub Copilot and add a short project summary"); transcribe.add_argument("--meeting-title", default="", help="Meeting title supplied to Copilot as summary context"); transcribe.add_argument("--summary-projects", default=DEFAULT_PROJECT_CONTEXT, help="Known project names and aliases supplied to Copilot")
+    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true"); transcribe.add_argument("--copilot-summary", action="store_true", help="Send transcript text to GitHub Copilot and add a short project summary"); transcribe.add_argument("--meeting-title", default="", help="Meeting title supplied to Copilot as summary context"); transcribe.add_argument("--summary-projects", default=DEFAULT_PROJECT_CONTEXT, help="Known project names and aliases supplied to Copilot"); transcribe.add_argument("--summary-model", default=MODEL_ID, help="GitHub Copilot model ID used for the optional summary (default: auto)")
     diagnose = subparsers.add_parser("diagnose", help="Analyze speaker clusters and profile matches without transcribing or changing profiles"); diagnose.add_argument("input"); diagnose.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit analysis to this known name; repeat for multiple speakers")
     configuration = subparsers.add_parser("config", help="Export or import portable local configuration")
     configuration_sub = configuration.add_subparsers(dest="configuration_action", required=True)
