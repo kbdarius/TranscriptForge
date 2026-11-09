@@ -6,3 +6,5 @@ resemblyzer>=0.1.4
 pywin32>=306
 soundcard>=0.4.6
 github-copilot-sdk==1.0.22
+PyJWT>=2.9
+cryptography>=42

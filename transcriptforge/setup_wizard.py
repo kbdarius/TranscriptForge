@@ -40,6 +40,8 @@ _PACKAGE_DETAILS = {
     "pywin32": ("Optional Python COM client for Outlook Classic; PowerShell fallback is available", False, "win32com"),
     "soundcard": ("Optional live system-audio recording", False, "soundcard"),
     "github-copilot-sdk": ("Optional GitHub Copilot transcript summaries", False, "copilot"),
+    "pyjwt": ("Optional ChatGPT account sign-in for transcript summaries", False, "jwt"),
+    "cryptography": ("Optional cryptographic verification for ChatGPT sign-in", False, "cryptography"),
 }
 
 _NETWORK_FAILURE_MARKERS = (

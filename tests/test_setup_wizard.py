@@ -29,7 +29,7 @@ class SetupWizardTests(unittest.TestCase):
         )
         self.assertEqual(
             {name for name, spec in by_name.items() if not spec.required},
-            {"resemblyzer", "pywin32", "soundcard", "github-copilot-sdk"},
+            {"resemblyzer", "pywin32", "soundcard", "github-copilot-sdk", "PyJWT", "cryptography"},
         )
         self.assertEqual(by_name["resemblyzer"].import_name, "resemblyzer")
         self.assertEqual(by_name["github-copilot-sdk"].import_name, "copilot")

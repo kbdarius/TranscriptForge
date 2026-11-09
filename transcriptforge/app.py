@@ -17,7 +17,9 @@ from tkinter import filedialog, messagebox, ttk
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
-from .controller import TranscriptionController
+from .chatgpt_auth import ChatGPTAuthenticator
+from .chatgpt_provider import ChatGPTSummaryClient, DEFAULT_MODEL_ID
+from .controller import CHATGPT_PROVIDER, GITHUB_COPILOT_PROVIDER, TranscriptionController
 from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT, MODEL_ID, MODEL_NAME
 from .configuration import export_configuration, import_configuration
 from .media import SUPPORTED_EXTENSIONS
@@ -43,7 +45,7 @@ class App(tk.Tk):
         self.live_recording_folder_var = tk.StringVar(value=default_live_folder)
         self.live_recorder = None; self._capture_should_transcribe = False; self._capture_discard = False; self._close_after_capture = False; self._pending_live_transcription = False
         self.input_var = tk.StringVar(); self.folder_var = tk.StringVar(); self.filename_var = tk.StringVar(); self.meeting_var = tk.StringVar(); self.model_var = tk.StringVar(value="small.en"); self.language_var = tk.StringVar(value="en"); self.expected_speakers_var = tk.StringVar(); self.status_var = tk.StringVar(value="Select an audio or video file.")
-        self.generate_copilot_summary = tk.BooleanVar(value=False); self.summary_project_context_var = tk.StringVar(value=DEFAULT_PROJECT_CONTEXT); self.copilot_model_var = tk.StringVar(value=MODEL_ID); self.copilot_model_display_var = tk.StringVar(value=MODEL_NAME); self.copilot_model_ids_by_label = {MODEL_NAME: MODEL_ID}; self.copilot_status_var = tk.StringVar(value="Connection not checked"); self.copilot_test_button = None; self.copilot_scan_button = None; self.copilot_model_combo = None; self.copilot_request_client = None; self.copilot_dialog = None; self.copilot_validation_token = 0
+        self.generate_copilot_summary = tk.BooleanVar(value=False); self.summary_project_context_var = tk.StringVar(value=DEFAULT_PROJECT_CONTEXT); self.summary_provider_var = tk.StringVar(value=GITHUB_COPILOT_PROVIDER); self.copilot_model_var = tk.StringVar(value=MODEL_ID); self.copilot_model_display_var = tk.StringVar(value=MODEL_NAME); self.copilot_model_ids_by_label = {MODEL_NAME: MODEL_ID}; self.summary_model_ids = {GITHUB_COPILOT_PROVIDER: MODEL_ID, CHATGPT_PROVIDER: DEFAULT_MODEL_ID}; self.copilot_status_var = tk.StringVar(value="Connection not checked"); self.copilot_status_label = None; self.copilot_test_button = None; self.copilot_scan_button = None; self.copilot_model_combo = None; self.copilot_provider_combo = None; self.copilot_connect_button = None; self.copilot_request_client = None; self.copilot_dialog = None; self.copilot_validation_token = 0; self.chatgpt_authenticator = ChatGPTAuthenticator()
         self.filename_templates = FilenameTemplateSettings(); self._job_controls = []; self._build(); self._load_preferences(); self.identify_speakers.set(self.identify_speakers.get() or identify_speakers); self.model_var.trace_add("write", lambda *_: self._update_model_button()); self._update_model_button(); self.after(100, self._poll); self.after(150, lambda: self._startup(initial_input, auto_start, prompt_recording_folder, recording_folder)); self.after(250, self._load_outlook_meetings)
         self.protocol("WM_DELETE_WINDOW", self._close_application)
     def _window_title(self, label):
@@ -344,7 +346,11 @@ class App(tk.Tk):
         base = re.sub(r"[-_]\d{8}$", "", stem).strip(" -_") or meeting.subject
         self.meeting_output_settings.remember(meeting.subject, folder, base)
     def _configuration_preferences(self):
-        return {"language": self.language_var.get(), "whisper_model": self.model_var.get(), "expected_speakers": self.expected_speakers_var.get(), "retain_wav": self.retain.get(), "include_timestamps": self.include_timestamps.get(), "open_after": self.open_after.get(), "identify_speakers": self.identify_speakers.get(), "rename_source": self.rename_source.get(), "generate_copilot_summary": self.generate_copilot_summary.get(), "summary_project_context": self.summary_project_context_var.get(), "summary_model_id": self.copilot_model_var.get()}
+        provider_variable = getattr(self, "summary_provider_var", None)
+        provider = provider_variable.get() if provider_variable is not None else GITHUB_COPILOT_PROVIDER
+        model_ids = getattr(self, "summary_model_ids", {GITHUB_COPILOT_PROVIDER: self.copilot_model_var.get().strip()})
+        model_ids[provider] = self.copilot_model_var.get().strip()
+        return {"language": self.language_var.get(), "whisper_model": self.model_var.get(), "expected_speakers": self.expected_speakers_var.get(), "retain_wav": self.retain.get(), "include_timestamps": self.include_timestamps.get(), "open_after": self.open_after.get(), "identify_speakers": self.identify_speakers.get(), "rename_source": self.rename_source.get(), "generate_copilot_summary": self.generate_copilot_summary.get(), "summary_project_context": self.summary_project_context_var.get(), "summary_provider": provider, "summary_model_id": self.copilot_model_var.get(), "summary_model_ids": dict(model_ids)}
 
     def _load_preferences(self):
         preferences = PreferencesSettings().values
@@ -352,8 +358,14 @@ class App(tk.Tk):
         if preferences.get("whisper_model") in MODEL_NAMES: self.model_var.set(preferences["whisper_model"])
         if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
         if isinstance(preferences.get("summary_project_context"), str): self.summary_project_context_var.set(preferences["summary_project_context"])
-        if isinstance(preferences.get("summary_model_id"), str) and preferences["summary_model_id"].strip():
-            saved_model = preferences["summary_model_id"].strip(); self.copilot_model_var.set(saved_model); self.copilot_model_display_var.set(MODEL_NAME if saved_model == MODEL_ID else saved_model); self.copilot_model_ids_by_label = {self.copilot_model_display_var.get(): saved_model}
+        saved_models = preferences.get("summary_model_ids")
+        if isinstance(saved_models, dict):
+            for provider in (GITHUB_COPILOT_PROVIDER, CHATGPT_PROVIDER):
+                if isinstance(saved_models.get(provider), str) and saved_models[provider].strip(): self.summary_model_ids[provider] = saved_models[provider].strip()
+        if isinstance(preferences.get("summary_model_id"), str) and preferences["summary_model_id"].strip() and not isinstance(saved_models, dict):
+            self.summary_model_ids[str(preferences.get("summary_provider") or GITHUB_COPILOT_PROVIDER)] = preferences["summary_model_id"].strip()
+        provider = preferences.get("summary_provider") if preferences.get("summary_provider") in (GITHUB_COPILOT_PROVIDER, CHATGPT_PROVIDER) else GITHUB_COPILOT_PROVIDER
+        self.summary_provider_var.set(provider); saved_model = self.summary_model_ids.get(provider, MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID); self.copilot_model_var.set(saved_model); self.copilot_model_display_var.set(MODEL_NAME if provider == GITHUB_COPILOT_PROVIDER and saved_model == MODEL_ID else saved_model); self.copilot_model_ids_by_label = {self.copilot_model_display_var.get(): saved_model}
         for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source), ("generate_copilot_summary", self.generate_copilot_summary)):
             if isinstance(preferences.get(key), bool): variable.set(preferences[key])
 
@@ -385,8 +397,13 @@ class App(tk.Tk):
                 if preferences.get("whisper_model") in MODEL_NAMES: self.model_var.set(preferences["whisper_model"])
                 if isinstance(preferences.get("expected_speakers"), str): self.expected_speakers_var.set(preferences["expected_speakers"])
                 if isinstance(preferences.get("summary_project_context"), str): self.summary_project_context_var.set(preferences["summary_project_context"])
-                if isinstance(preferences.get("summary_model_id"), str) and preferences["summary_model_id"].strip():
-                    saved_model = preferences["summary_model_id"].strip(); self.copilot_model_var.set(saved_model); self.copilot_model_display_var.set(MODEL_NAME if saved_model == MODEL_ID else saved_model); self.copilot_model_ids_by_label = {self.copilot_model_display_var.get(): saved_model}
+                imported_provider = preferences.get("summary_provider") if preferences.get("summary_provider") in (GITHUB_COPILOT_PROVIDER, CHATGPT_PROVIDER) else self.summary_provider_var.get()
+                imported_models = preferences.get("summary_model_ids")
+                if isinstance(imported_models, dict):
+                    for key, value in imported_models.items():
+                        if key in (GITHUB_COPILOT_PROVIDER, CHATGPT_PROVIDER) and isinstance(value, str) and value.strip(): self.summary_model_ids[key] = value.strip()
+                if isinstance(preferences.get("summary_model_id"), str) and preferences["summary_model_id"].strip(): self.summary_model_ids[imported_provider] = preferences["summary_model_id"].strip()
+                self.summary_provider_var.set(imported_provider); saved_model = self.summary_model_ids.get(imported_provider, MODEL_ID if imported_provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID); self.copilot_model_var.set(saved_model); self.copilot_model_display_var.set(MODEL_NAME if imported_provider == GITHUB_COPILOT_PROVIDER and saved_model == MODEL_ID else saved_model); self.copilot_model_ids_by_label = {self.copilot_model_display_var.get(): saved_model}
                 for key, variable in (("retain_wav", self.retain), ("include_timestamps", self.include_timestamps), ("open_after", self.open_after), ("identify_speakers", self.identify_speakers), ("rename_source", self.rename_source)):
                     if isinstance(preferences.get(key), bool): variable.set(preferences[key])
             self.filename_templates.load(); self._save_preferences()
@@ -403,7 +420,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="Expected speakers (optional, comma-separated)").pack(anchor="w"); ttk.Entry(frame, textvariable=self.expected_speakers_var, width=42).pack(anchor="w", pady=(2, 8))
         copilot_settings_button = ttk.Button(
             frame,
-            text="Configure GitHub Copilot summary...",
+            text="Configure AI summary...",
             command=lambda: self._open_copilot_summary_settings(dialog, copilot_settings_button),
         )
         copilot_settings_button.pack(anchor="w", pady=(2, 8))
@@ -481,20 +498,26 @@ class App(tk.Tk):
             except tk.TclError:
                 self.copilot_dialog = None
         dialog = tk.Toplevel(parent); self.copilot_dialog = dialog
-        dialog.title(self._window_title("GitHub Copilot summary")); dialog.transient(parent); dialog.resizable(True, False)
+        dialog.title(self._window_title("AI summary provider")); dialog.transient(parent); dialog.resizable(True, False)
         frame = ttk.Frame(dialog, padding=14); frame.pack(fill="both", expand=True)
         summary_checkbox = ttk.Checkbutton(
             frame,
-            text="Add a short Copilot summary to the top of each transcript",
+            text="Add a short AI summary to the top of each transcript",
             variable=self.generate_copilot_summary,
         )
         summary_checkbox.pack(anchor="w")
         ttk.Label(
             frame,
-            text="When enabled, the meeting title, speaker names, and transcript text are sent to GitHub Copilot. Audio, file paths, and voice profiles stay local.",
+            text="When enabled, the meeting title, speaker names, and bounded transcript text are sent to the selected provider. Audio, file paths, and voice profiles stay local.",
             wraplength=560,
         ).pack(anchor="w", pady=(6, 10))
-        ttk.Label(frame, text="Copilot model (Alt+M)").pack(anchor="w")
+        ttk.Label(frame, text="AI provider").pack(anchor="w")
+        provider_labels = {GITHUB_COPILOT_PROVIDER: "GitHub Copilot", CHATGPT_PROVIDER: "ChatGPT"}
+        provider_display_var = tk.StringVar(value=provider_labels.get(self.summary_provider_var.get(), "GitHub Copilot"))
+        self.copilot_provider_combo = ttk.Combobox(frame, textvariable=provider_display_var, values=tuple(provider_labels.values()), state="readonly", width=42)
+        self.copilot_provider_combo.pack(fill="x", pady=(2, 8))
+        self.copilot_provider_combo.bind("<<ComboboxSelected>>", lambda _event: self._select_summary_provider(provider_display_var.get()))
+        ttk.Label(frame, text="Model (Alt+M)").pack(anchor="w")
         model_row = ttk.Frame(frame); model_row.pack(fill="x", pady=(2, 4))
         self.copilot_model_combo = ttk.Combobox(
             model_row,
@@ -511,9 +534,15 @@ class App(tk.Tk):
             command=lambda: self._scan_copilot_models(dialog),
         )
         self.copilot_scan_button.pack(side="left", padx=(8, 0))
+        self.copilot_connect_button = ttk.Button(
+            frame,
+            text="Continue with ChatGPT",
+            command=lambda: self._connect_chatgpt(dialog),
+        )
+        self.copilot_connect_button.pack(anchor="w", pady=(2, 6))
         ttk.Label(
             frame,
-            text="Scan uses the signed-in Copilot account and sends no transcript. Auto lets GitHub choose the model for each summary.",
+            text="Scan sends no transcript. ChatGPT requires a one-time browser authorization; GitHub uses the signed-in Copilot CLI account.",
             wraplength=560,
         ).pack(anchor="w", pady=(0, 10))
         project_label = ttk.Label(frame, text="Weekly-report projects and aliases")
@@ -527,7 +556,8 @@ class App(tk.Tk):
             command=lambda: self._test_copilot_connection(dialog),
         )
         self.copilot_test_button.pack(side="left")
-        ttk.Label(copilot_controls, textvariable=self.copilot_status_var, wraplength=390).pack(side="left", padx=(8, 0))
+        self.copilot_status_label = ttk.Label(copilot_controls, textvariable=self.copilot_status_var, wraplength=390, takefocus=True)
+        self.copilot_status_label.pack(side="left", padx=(8, 0))
 
         def close_dialog():
             self.copilot_validation_token += 1
@@ -537,6 +567,9 @@ class App(tk.Tk):
             self.copilot_test_button = None
             self.copilot_scan_button = None
             self.copilot_model_combo = None
+            self.copilot_provider_combo = None
+            self.copilot_connect_button = None
+            self.copilot_status_label = None
             self.copilot_dialog = None
             try: dialog.grab_release()
             except tk.TclError: pass
@@ -552,12 +585,86 @@ class App(tk.Tk):
         dialog.bind("<Alt-w>", lambda _event: project_entry.focus_set())
         dialog.grab_set()
         dialog.after_idle(summary_checkbox.focus_set)
+        self._update_summary_provider_controls()
+
+    def _set_copilot_status(self, message, *, focus=False):
+        self.copilot_status_var.set(message)
+        label = getattr(self, "copilot_status_label", None)
+        if focus and label is not None:
+            try:
+                if label.winfo_exists():
+                    label.focus_set()
+            except tk.TclError:
+                pass
+
+    def _select_summary_provider(self, label):
+        provider = CHATGPT_PROVIDER if label == "ChatGPT" else GITHUB_COPILOT_PROVIDER
+        self.summary_model_ids[self.summary_provider_var.get()] = self.copilot_model_var.get().strip()
+        self.summary_provider_var.set(provider)
+        model_id = self.summary_model_ids.get(provider, MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID)
+        self.copilot_model_var.set(model_id)
+        self.copilot_model_display_var.set(MODEL_NAME if provider == GITHUB_COPILOT_PROVIDER and model_id == MODEL_ID else model_id)
+        self.copilot_model_ids_by_label = {self.copilot_model_display_var.get(): model_id}
+        self.copilot_status_var.set(f"Selected {('ChatGPT' if provider == CHATGPT_PROVIDER else 'GitHub Copilot')}. Scan available models to refresh the list.")
+        self._update_summary_provider_controls()
+
+    def _update_summary_provider_controls(self):
+        if self.copilot_connect_button is not None:
+            self.copilot_connect_button.configure(state="normal" if self.summary_provider_var.get() == CHATGPT_PROVIDER else "disabled")
 
     def _select_copilot_model(self, _event=None):
         label = self.copilot_model_display_var.get()
         model_id = self.copilot_model_ids_by_label.get(label, label)
         self.copilot_model_var.set(model_id)
-        self.copilot_status_var.set(f"Selected Copilot model: {label}. Use Test selected model to verify access.")
+        model_ids = getattr(self, "summary_model_ids", None)
+        if model_ids is not None:
+            provider_variable = getattr(self, "summary_provider_var", None)
+            model_ids[provider_variable.get() if provider_variable is not None else GITHUB_COPILOT_PROVIDER] = model_id
+        provider_variable = getattr(self, "summary_provider_var", None)
+        provider_name = "ChatGPT" if provider_variable is not None and provider_variable.get() == CHATGPT_PROVIDER else "GitHub Copilot"
+        self.copilot_status_var.set(f"Selected {provider_name} model: {label}. Use Test selected model to verify access.")
+
+    def _summary_client(self, provider, model_id):
+        if provider == CHATGPT_PROVIDER:
+            return ChatGPTSummaryClient(access_token=self.chatgpt_authenticator.access_token(), model_id=model_id)
+        return CopilotSummaryClient(model_id=model_id)
+
+    def _connect_chatgpt(self, owner):
+        if self.copilot_request_client is not None:
+            self.copilot_request_client.cancel()
+        self.copilot_validation_token += 1
+        token = self.copilot_validation_token
+        self._set_copilot_status("Opening the browser to connect your ChatGPT account...", focus=True)
+        if self.copilot_connect_button is not None:
+            self.copilot_connect_button.configure(state="disabled")
+
+        def worker():
+            try:
+                account = self.chatgpt_authenticator.sign_in()
+                result = (True, f"ChatGPT connected as {account.email}. Scan available models to continue.")
+            except Exception as exc:
+                result = (False, str(exc))
+            self.events.put(("chatgpt_connection", (token, owner, result)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_chatgpt_connection(self, payload):
+        token, owner, result = payload
+        if token != self.copilot_validation_token:
+            return
+        try:
+            if not owner.winfo_exists() or owner is not self.copilot_dialog:
+                return
+        except tk.TclError:
+            return
+        success, message = result
+        self.copilot_status_var.set(message)
+        self._update_summary_provider_controls()
+        if self.copilot_connect_button is not None:
+            self.copilot_connect_button.configure(state="normal")
+            self.copilot_connect_button.focus_set()
+        show = messagebox.showinfo if success else messagebox.showwarning
+        show(self._window_title("ChatGPT connected" if success else "ChatGPT connection failed"), message, parent=owner)
 
     def _scan_copilot_models(self, owner):
         if self.copilot_scan_button is None:
@@ -566,17 +673,24 @@ class App(tk.Tk):
             self.copilot_request_client.cancel()
         self.copilot_validation_token += 1
         token = self.copilot_validation_token
-        client = CopilotSummaryClient()
+        provider = self.summary_provider_var.get()
+        model_id = self.copilot_model_var.get().strip() or (MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID)
+        try:
+            client = self._summary_client(provider, model_id)
+        except Exception as exc:
+            self.copilot_status_var.set(str(exc))
+            return
         self.copilot_request_client = client
         self.copilot_scan_button.configure(state="disabled")
         if self.copilot_test_button is not None:
             self.copilot_test_button.configure(state="disabled")
-        self.copilot_status_var.set("Scanning models available to the signed-in Copilot account...")
+        provider_name = "ChatGPT" if provider == CHATGPT_PROVIDER else "GitHub Copilot"
+        self._set_copilot_status(f"Scanning models available to the signed-in {provider_name} account...", focus=True)
 
         def worker():
             try:
                 models = client.list_available_models()
-                result = (True, models, f"Found {len(models)} available Copilot model(s).")
+                result = (True, models, f"Found {len(models)} available {provider_name} model(s).")
             except Exception as exc:
                 result = (False, [], str(exc))
             self.events.put(("copilot_models", (token, owner, result)))
@@ -611,11 +725,17 @@ class App(tk.Tk):
             self.copilot_model_ids_by_label = {model.display_name: model.id for model in models}
             combo.configure(values=labels)
             self.copilot_model_var.set(selected)
+            model_ids = getattr(self, "summary_model_ids", None)
+            if model_ids is not None:
+                provider_variable = getattr(self, "summary_provider_var", None)
+                model_ids[provider_variable.get() if provider_variable is not None else GITHUB_COPILOT_PROVIDER] = selected
             selected_model = next(model for model in models if model.id == selected)
             self.copilot_model_display_var.set(selected_model.display_name)
             message = f"{message} Selected: {selected_model.display_name}."
         self.copilot_status_var.set(message)
-        title = "Copilot models found" if success else "Could not scan Copilot models"
+        provider_variable = getattr(self, "summary_provider_var", None)
+        provider_name = "ChatGPT" if provider_variable is not None and provider_variable.get() == CHATGPT_PROVIDER else "GitHub Copilot"
+        title = f"{provider_name} models found" if success else f"Could not scan {provider_name} models"
         show = messagebox.showinfo if success else messagebox.showwarning
         show(self._window_title(title), message, parent=owner)
 
@@ -630,10 +750,16 @@ class App(tk.Tk):
         button.configure(state="disabled")
         if self.copilot_scan_button is not None:
             self.copilot_scan_button.configure(state="disabled")
-        selected_model = self.copilot_model_var.get().strip() or MODEL_ID
-        client = CopilotSummaryClient(model_id=selected_model)
+        provider = self.summary_provider_var.get()
+        selected_model = self.copilot_model_var.get().strip() or (MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID)
+        try:
+            client = self._summary_client(provider, selected_model)
+        except Exception as exc:
+            self.copilot_status_var.set(str(exc))
+            return
         self.copilot_request_client = client
-        self.copilot_status_var.set(f"Checking sign-in and availability for '{selected_model}'...")
+        provider_name = "ChatGPT" if provider == CHATGPT_PROVIDER else "GitHub Copilot"
+        self.copilot_status_var.set(f"Checking {provider_name} sign-in and availability for '{selected_model}'...")
 
         def worker():
             result = client.validate_connection()
@@ -667,7 +793,9 @@ class App(tk.Tk):
                     scan_button.configure(state="normal")
             except tk.TclError:
                 self.copilot_scan_button = None
-        title = "GitHub Copilot ready" if success else "GitHub Copilot unavailable"
+        provider_variable = getattr(self, "summary_provider_var", None)
+        provider_name = "ChatGPT" if provider_variable is not None and provider_variable.get() == CHATGPT_PROVIDER else "GitHub Copilot"
+        title = f"{provider_name} ready" if success else f"{provider_name} unavailable"
         show = messagebox.showinfo if success else messagebox.showwarning
         show(self._window_title(title), message, parent=owner)
 
@@ -1242,7 +1370,7 @@ class App(tk.Tk):
         identify_speakers = self.identify_speakers.get() or meeting is not None or max_speakers is not None
         if identify_speakers and not self.identify_speakers.get():
             self._write_log("Speaker identification is enabled for this recording because a meeting or speaker limit was selected.")
-        self.active_source = source; self.active_output = output; self.active_meeting = meeting; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v))); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), identify_speakers, self.rename_source.get(), self.rename_overwrite, expected_speakers, max_speakers, meeting is not None, self.generate_copilot_summary.get(), self.summary_project_context_var.get(), meeting.subject if meeting is not None else "", self.copilot_model_var.get())
+        self.active_source = source; self.active_output = output; self.active_meeting = meeting; self._recent_speaker_names = []; self.controller = TranscriptionController(lambda k, v: self.events.put((k, v)), self._summary_client); self._set_job_fields_enabled(False); self.transcribe_button.configure(state="disabled"); self.new_button.configure(state="disabled"); self.cancel_button.configure(state="normal"); self.progress["value"] = 0; self._write_log("Starting local transcription..."); self.controller.start(source, output, self.model_var.get(), self.language_var.get(), self.retain.get(), self.include_timestamps.get(), identify_speakers, self.rename_source.get(), self.rename_overwrite, expected_speakers, max_speakers, meeting is not None, self.generate_copilot_summary.get(), self.summary_project_context_var.get(), meeting.subject if meeting is not None else "", self.copilot_model_var.get(), self.summary_provider_var.get())
 
     @staticmethod
     def _outlook_speaker_names(meeting):
@@ -1717,6 +1845,7 @@ class App(tk.Tk):
                 elif kind == "log": self._write_log(str(value))
                 elif kind == "model_ready": self._update_model_button()
                 elif kind == "copilot_models": self._finish_copilot_model_scan(value)
+                elif kind == "chatgpt_connection": self._finish_chatgpt_connection(value)
                 elif kind == "copilot_validation": self._finish_copilot_validation(value)
                 elif kind == "outlook_meetings": self._set_outlook_meetings(value); self._maybe_start_pending_live_transcription()
                 elif kind == "outlook_error":

@@ -1,24 +1,25 @@
 metadata:
   project: "TranscriptForge"
-  project_description: "Local-first Windows desktop and CLI application for audio/video transcription with optional speaker identification and opt-in GitHub Copilot summaries."
+  project_description: "Local-first Windows desktop and CLI application for audio/video transcription with optional speaker identification and opt-in GitHub Copilot or ChatGPT summaries."
   project_type: "mixed"
   project_subtype: "Windows desktop application with local speech processing and project documentation"
   classification_confidence: "high"
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.10.0"
+  version: "1.11.0"
   status: "current"
   created_date: "2026-09-25"
   last_updated: "2026-11-06"
   target_root: 'D:\OneDrive\OneDrive - stryten.com\Code\Other\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Updated 2026-11-06 from the working tree at application version 0.30.0; includes account-aware GitHub Copilot model scanning and selection, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
+    value: "Updated 2026-11-09 from the working tree at application version 0.31.0; includes selectable GitHub Copilot or ChatGPT summary providers, account-aware model scanning and selection, Sign in with ChatGPT OAuth, protected local ChatGPT credentials, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.30.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.31.0; verify claims against current source and tests after later changes."
     - "GitHub Copilot availability depends on local SDK installation, Copilot CLI sign-in, plan allowance, network access, model rollout, and organization policy."
+    - "ChatGPT summary availability depends on OpenAI Sign in with ChatGPT authorization, ChatGPT plan access, model rollout, network access, and the documented Responses API preview constraints."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
     - "Git-ignored .tfconfig packages, local recordings, decoded audio, model files, speaker profiles, and live Outlook data were not inspected."
     - "Live WASAPI capture and interactive Outlook behavior were not exercised; speaker-name focus and mouse selection were validated with a local Tk widget check."
@@ -198,6 +199,30 @@ project_components:
       - "Only meeting title, speaker names, editable project aliases, and transcript text are sent; audio, file paths, voice profiles, tools, workspace context, and session storage remain unavailable to the request."
       - "Long transcripts use bounded excerpts from the start, middle, and end, and summary failure never blocks Markdown transcript creation."
 
+  - name: "Optional ChatGPT summaries"
+    path: "transcriptforge/chatgpt_provider.py"
+    purpose: "Creates the same short project/topic bullets through the user's explicitly authorized ChatGPT plan account."
+    critical: false
+    authoritative_sources:
+      - "transcriptforge/chatgpt_auth.py"
+      - "transcriptforge/chatgpt_provider.py"
+      - "transcriptforge/controller.py"
+      - "transcriptforge/app.py"
+    supporting_sources:
+      - "tests/test_chatgpt_provider.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+    dependencies:
+      - "Optional PyJWT and cryptography packages"
+      - "OpenAI Sign in with ChatGPT authorization in the system browser"
+      - "Eligible ChatGPT plan usage, account model access, and network access"
+    constraints:
+      - "The user must choose Continue with ChatGPT and authorize plan usage; being signed into the ChatGPT desktop app alone is not used as an implicit credential."
+      - "OAuth credentials are stored in a Windows DPAPI-protected local record and are never exported, logged, or committed."
+      - "Model scanning uses the selected account's /v1/models catalog; summaries use the Responses API with store=false and stream=true."
+      - "OpenAI preview restrictions apply: audio/video input, file upload, hosted tools, and persistent remote conversation state are not used."
+      - "Only meeting title, speaker names, editable project aliases, and bounded transcript text are sent; summary failure never blocks Markdown transcript creation."
+
   - name: "Local settings and portable configuration"
     path: "transcriptforge/settings.py"
     purpose: "Persists application preferences, live-recording folder, recent content providers, and histories locally and imports or exports portable configuration packages."
@@ -236,7 +261,7 @@ project_components:
       - "The feasibility plan is prospective; do not treat its proposed work as implemented."
 
 system_or_information_flow:
-  overview: "The user selects local media or captures Windows playback audio. TranscriptForge decodes audio locally, optionally analyzes and reviews speakers, transcribes with a cached local Whisper model, optionally requests a GitHub Copilot summary, and writes Markdown output."
+  overview: "The user selects local media or captures Windows playback audio. TranscriptForge decodes audio locally, optionally analyzes and reviews speakers, transcribes with a cached local Whisper model, optionally requests a GitHub Copilot or ChatGPT summary, and writes Markdown output."
   inputs:
     - "Supported local WAV, MP3, M4A, AAC, MP4, MOV, or MKV media."
     - "User-selected model, language, output options, and optional speaker preferences."
@@ -244,6 +269,7 @@ system_or_information_flow:
     - "Optional live audio from the default Windows playback endpoint through WASAPI loopback."
     - "Optional editable weekly-report project names and aliases used only as Copilot summary context."
     - "Optional GitHub Copilot model ID selected from a live account-specific model scan."
+    - "Optional ChatGPT account authorization, account-specific model ID, and bounded summary context."
   processing_or_workflow:
     - "transcriptforge/media.py invokes the FFmpeg executable supplied by imageio-ffmpeg to create temporary mono 16 kHz PCM audio."
     - "transcriptforge/audio.py reads samples for local speech and speaker processing."
@@ -253,6 +279,7 @@ system_or_information_flow:
     - "transcriptforge/output.py renders and atomically writes the Markdown transcript."
     - "The Copilot settings dialog can scan account-available models without transcript content, saves the selected stable model ID, and tests availability before transcription."
     - "When explicitly enabled, an isolated tool-free Copilot session uses the selected model and receives the meeting title, speaker labels, project aliases, and bounded transcript text; normalized bullets are prepended when successful, the reported model is logged, and otherwise transcript creation continues without them."
+    - "When ChatGPT is selected, the user authorizes a local OAuth client in the browser, the provider scans the account model catalog, and a bounded Responses API request is sent with the selected model; normalized bullets are prepended when successful, the reported model is logged, and otherwise transcript creation continues without them."
   outputs:
     - "A timestamped Markdown transcript in the selected output location."
     - "A local WAV recording when live system-audio capture is used."
@@ -263,7 +290,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -318,7 +345,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -625,6 +652,20 @@ constraints_and_known_issues:
       - "README.md"
 
 recent_changes_summary:
+  - date: "2026-11-09"
+    description: "Added selectable GitHub Copilot or ChatGPT summary providers, OpenAI Sign in with ChatGPT authorization, protected local credentials, account-specific ChatGPT model scanning, selected-model validation, and CLI provider parity."
+    affected_areas:
+      - "transcriptforge/chatgpt_auth.py"
+      - "transcriptforge/chatgpt_provider.py"
+      - "transcriptforge/controller.py"
+      - "transcriptforge/app.py"
+      - "transcriptforge/cli.py"
+      - "transcriptforge/setup_wizard.py"
+      - "requirements.txt"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - "tests/"
+    evidence: "Automated tests and source review for application version 0.31.0; implementation follows the official OpenAI Sign in with ChatGPT open-source flow and Responses API preview constraints."
   - date: "2026-11-06"
     description: "Added live GitHub Copilot model discovery and selection, persistent stable model IDs, selected-model validation, actual-model logging, and cancellation-safe background requests."
     affected_areas:
@@ -764,7 +805,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.10.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:
@@ -811,9 +852,11 @@ ai_navigation:
         - "tests/test_speakers.py"
         - "tests/test_speaker_names.py"
         - "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
-    - task: "Optional GitHub Copilot transcript summaries"
+    - task: "Optional GitHub Copilot or ChatGPT transcript summaries"
       start_with:
         - "transcriptforge/copilot_summary.py"
+        - "transcriptforge/chatgpt_auth.py"
+        - "transcriptforge/chatgpt_provider.py"
         - "transcriptforge/controller.py"
         - "transcriptforge/app.py"
       then_check:

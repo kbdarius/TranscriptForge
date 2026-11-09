@@ -30,6 +30,7 @@ That selects `tiny.en`, `base.en`, and `small.en`, so allow additional disk spac
 - Windows PowerShell is used by the optional Outlook Classic COM fallback and task installer; Task Scheduler is only needed for scheduled recording scans.
 - Internet access during first setup for Python packages and model files, unless the organization provides an approved internal mirror.
 - The optional GitHub Copilot summary requires a Copilot-enabled GitHub account, GitHub CLI or Copilot CLI sign-in, and internet access. The official SDK may download its managed runtime on first use.
+- The optional ChatGPT summary requires `PyJWT`, internet access, and a one-time **Continue with ChatGPT** browser authorization. The local OAuth credential is protected with Windows DPAPI and is not included in exported configuration packages.
 - Enough disk space for Python packages, temporary decoded audio, and the selected models. `small.en` is approximately 461 MB; installing all three supported Whisper models is roughly 680 MB before temporary audio and package space.
 
 The wizard uses per-user Python package installation outside a virtual environment and the CPU PyTorch build. Administrator rights are not normally required for Python packages. Installing Visual Studio C++ Build Tools may require IT approval or administrator rights. NVIDIA/CUDA is not required for the supported default workflow.
@@ -50,6 +51,8 @@ These are the direct runtime dependencies declared in `requirements.txt` and lis
 | `pywin32` | Optional | Python COM client for Outlook Classic; a hidden PowerShell COM fallback is used if Python activation fails |
 | `soundcard` | Optional | Windows WASAPI loopback capture for live system playback recording |
 | `github-copilot-sdk` | Optional | Uses the signed-in GitHub/Copilot account to create short transcript summaries; no API key or token is stored by TranscriptForge |
+| `PyJWT` | Optional | Verifies the ChatGPT identity token during the local Sign in with ChatGPT flow |
+| `cryptography` | Optional | Provides RSA verification support for the ChatGPT identity token |
 
 No separate `ffmpeg`, `ffprobe`, or `whisper` command-line installation is required. TranscriptForge invokes the FFmpeg executable supplied by `imageio-ffmpeg` and passes decoded samples directly to Whisper.
 
@@ -99,6 +102,7 @@ The profile file contains confirmed voice embeddings and names, not permanent au
 - A failed optional dependency does not block core transcription. The Summary stage lists missing optional features, and the wizard continues trying other packages and selected model downloads after individual failures.
 - TLS interception, proxy rules, GitHub/PyPI allow-listing, or quota policies can block package/model downloads. The installer cannot bypass those policies.
 - GitHub Copilot summaries also depend on Copilot access, plan allowance, model availability, and organization policy. Sign in with `gh auth login` using the Copilot-enabled account, or run `copilot` if the Copilot CLI is installed, then use **Setup > Configure GitHub Copilot summary > Scan available models** and **Test selected model**. These checks send no transcript text.
+- ChatGPT summaries use the official open-source **Sign in with ChatGPT** flow. In **Setup > Configure AI summary**, choose **ChatGPT**, select **Continue with ChatGPT**, authorize ChatGPT plan usage in the browser, then use **Scan available models** and **Test selected model**. These checks send no transcript text. Availability follows the ChatGPT account's plan, model access, and OpenAI's Responses API constraints.
 - If `winget` is unavailable, install Python 3.11+ through the organization's approved software channel, ensure the Python Launcher and Tkinter are included, then rerun setup.
 - Package installs use `--no-cache-dir` to force fresh package downloads. If one package fails, retry it from the Dependencies stage after the network or toolchain issue is addressed.
 - If the model download is interrupted, rerun setup. Completed files are reused and incomplete downloads are handled by the Whisper loader.
@@ -117,4 +121,4 @@ py -3 -c "from transcriptforge.copilot_summary import CopilotSummaryClient; prin
 py -3 -m transcriptforge
 ```
 
-All audio processing after setup is local, and audio is never sent to a cloud transcription service. When the optional GitHub Copilot summary is enabled, the meeting title, speaker names, and transcript text are sent to GitHub Copilot; file paths, audio, and voice profiles remain local. Summary failure never blocks transcript creation.
+All audio processing after setup is local, and audio is never sent to a cloud transcription service. When an optional AI summary is enabled, the meeting title, speaker names, and bounded transcript text are sent to the selected GitHub Copilot or ChatGPT provider; file paths, audio, and voice profiles remain local. Summary failure never blocks transcript creation.

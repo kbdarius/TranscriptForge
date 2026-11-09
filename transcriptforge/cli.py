@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .audio import read_wav
+from .chatgpt_provider import ChatGPTSummaryClient, DEFAULT_MODEL_ID
 from .configuration import export_configuration, import_configuration
 from .copilot_summary import CopilotSummaryClient, DEFAULT_PROJECT_CONTEXT, MODEL_ID
 from .media import SUPPORTED_EXTENSIONS, decode_to_wav, temporary_work_dir
@@ -132,18 +133,19 @@ def _transcribe(args) -> int:
                     _emit(args.json_events, "log", message=f"Filled {inferred} short Unknown segment(s) from matching neighboring speakers.")
             summary = ""
             if args.copilot_summary:
-                _emit(args.json_events, "stage", message="Creating optional GitHub Copilot summary")
+                provider_name = "ChatGPT" if args.summary_provider == "chatgpt" else "GitHub Copilot"
+                _emit(args.json_events, "stage", message=f"Creating optional {provider_name} summary")
                 try:
-                    summary_client = CopilotSummaryClient(model_id=args.summary_model)
+                    summary_client = ChatGPTSummaryClient(model_id=args.summary_model) if args.summary_provider == "chatgpt" else CopilotSummaryClient(model_id=args.summary_model)
                     summary = summary_client.summarize(
                         segments,
                         meeting_title=args.meeting_title,
                         project_context=args.summary_projects,
                     )
                     if summary_client.last_summary_used_excerpt:
-                        _emit(args.json_events, "log", message="The transcript was long; Copilot summarized bounded excerpts from its start, middle, and end.")
+                        _emit(args.json_events, "log", message=f"The transcript was long; {provider_name} summarized bounded excerpts from its start, middle, and end.")
                     actual_model = summary_client.last_model_used or args.summary_model
-                    _emit(args.json_events, "log", message=f"GitHub Copilot summary used model '{actual_model}'.")
+                    _emit(args.json_events, "log", message=f"{provider_name} summary used model '{actual_model}'.")
                 except Exception as exc:
                     _emit(args.json_events, "log", message=f"Warning: GitHub Copilot summary was skipped: {exc}")
             atomic_write(output, render_markdown(source, args.model, args.language, len(samples) / rate, segments, stats, cache_dir(), not args.no_timestamps, summary))
@@ -227,7 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json-events", action="store_true", help="Emit newline-delimited JSON events for automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
     transcribe = subparsers.add_parser("transcribe", help="Transcribe a local media file")
-    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true"); transcribe.add_argument("--copilot-summary", action="store_true", help="Send transcript text to GitHub Copilot and add a short project summary"); transcribe.add_argument("--meeting-title", default="", help="Meeting title supplied to Copilot as summary context"); transcribe.add_argument("--summary-projects", default=DEFAULT_PROJECT_CONTEXT, help="Known project names and aliases supplied to Copilot"); transcribe.add_argument("--summary-model", default=MODEL_ID, help="GitHub Copilot model ID used for the optional summary (default: auto)")
+    transcribe.add_argument("input"); transcribe.add_argument("--output"); transcribe.add_argument("--model", choices=MODEL_NAMES, default="small.en"); transcribe.add_argument("--language", default="en"); transcribe.add_argument("--force", action="store_true"); transcribe.add_argument("--speakers", action="store_true"); transcribe.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit speaker suggestions to this known name; repeat for multiple speakers"); transcribe.add_argument("--speaker-review", help="JSON review/map file from a previous run"); transcribe.add_argument("--review-out", help="Path for a generated speaker review JSON"); transcribe.add_argument("--accept-suggestions", action="store_true", help="Accept confident profile suggestions without a review checkpoint"); transcribe.add_argument("--no-timestamps", action="store_true"); transcribe.add_argument("--copilot-summary", action="store_true", help="Send transcript text to the selected AI provider and add a short project summary"); transcribe.add_argument("--meeting-title", default="", help="Meeting title supplied to the AI provider as summary context"); transcribe.add_argument("--summary-projects", default=DEFAULT_PROJECT_CONTEXT, help="Known project names and aliases supplied to the AI provider"); transcribe.add_argument("--summary-provider", choices=("github_copilot", "chatgpt"), default="github_copilot", help="AI provider for the optional summary"); transcribe.add_argument("--summary-model", default=MODEL_ID, help="Selected provider model ID (default: auto for GitHub Copilot)")
     diagnose = subparsers.add_parser("diagnose", help="Analyze speaker clusters and profile matches without transcribing or changing profiles"); diagnose.add_argument("input"); diagnose.add_argument("--expected-speaker", dest="expected_speakers", action="append", default=[], help="Limit analysis to this known name; repeat for multiple speakers")
     configuration = subparsers.add_parser("config", help="Export or import portable local configuration")
     configuration_sub = configuration.add_subparsers(dest="configuration_action", required=True)
