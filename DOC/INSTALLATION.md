@@ -1,6 +1,6 @@
 # TranscriptForge installation guide
 
-Current application version: `0.27.0`.
+Current application version: `0.32.0`.
 
 ## Quick setup on a new Windows PC
 
@@ -29,7 +29,7 @@ That selects `tiny.en`, `base.en`, and `small.en`, so allow additional disk spac
 - Microsoft C++ Build Tools with MSVC 14 or newer and a Windows SDK may be needed if pip has to compile a native dependency from source. In particular, `resemblyzer` depends on `webrtcvad`; if a compatible wheel is unavailable, that build requires the C++ compiler. The wizard links to the official Build Tools installer and identifies this compiler error separately from network failures.
 - Windows PowerShell is used by the optional Outlook Classic COM fallback and task installer; Task Scheduler is only needed for scheduled recording scans.
 - Internet access during first setup for Python packages and model files, unless the organization provides an approved internal mirror.
-- The optional GitHub Copilot summary requires a Copilot-enabled GitHub account, GitHub CLI or Copilot CLI sign-in, and internet access. The official SDK may download its managed runtime on first use.
+- The optional GitHub Copilot summary requires a Copilot-enabled GitHub account, GitHub CLI sign-in, and internet access. The official SDK may download its managed runtime on first use. The settings dialog can choose among successful accounts reported by `gh auth status`; VS Code's account storage is not read directly.
 - The optional ChatGPT summary requires `PyJWT`, internet access, and a one-time **Continue with ChatGPT** browser authorization. The local OAuth credential is protected with Windows DPAPI and is not included in exported configuration packages.
 - Enough disk space for Python packages, temporary decoded audio, and the selected models. `small.en` is approximately 461 MB; installing all three supported Whisper models is roughly 680 MB before temporary audio and package space.
 
@@ -50,7 +50,7 @@ These are the direct runtime dependencies declared in `requirements.txt` and lis
 | `resemblyzer` | Optional | Local voice embeddings for speaker clustering and profile matching |
 | `pywin32` | Optional | Python COM client for Outlook Classic; a hidden PowerShell COM fallback is used if Python activation fails |
 | `soundcard` | Optional | Windows WASAPI loopback capture for live system playback recording |
-| `github-copilot-sdk` | Optional | Uses the signed-in GitHub/Copilot account to create short transcript summaries; no API key or token is stored by TranscriptForge |
+| `github-copilot-sdk` | Optional | Uses the selected GitHub account to create short transcript summaries; no API key or token is stored by TranscriptForge |
 | `PyJWT` | Optional | Verifies the ChatGPT identity token during the local Sign in with ChatGPT flow |
 | `cryptography` | Optional | Provides RSA verification support for the ChatGPT identity token |
 
@@ -101,7 +101,7 @@ The profile file contains confirmed voice embeddings and names, not permanent au
 - If the report says `webrtcvad` needs Microsoft Visual C++ 14.0 or later, this is not a download block. Ask IT to install or approve Visual Studio Build Tools with the MSVC x64/x86 tools and a Windows SDK. The wizard's Welcome stage has a link to Microsoft's Build Tools page.
 - A failed optional dependency does not block core transcription. The Summary stage lists missing optional features, and the wizard continues trying other packages and selected model downloads after individual failures.
 - TLS interception, proxy rules, GitHub/PyPI allow-listing, or quota policies can block package/model downloads. The installer cannot bypass those policies.
-- GitHub Copilot summaries also depend on Copilot access, plan allowance, model availability, and organization policy. Sign in with `gh auth login` using the Copilot-enabled account, or run `copilot` if the Copilot CLI is installed, then use **Setup > Configure GitHub Copilot summary > Scan available models** and **Test selected model**. These checks send no transcript text.
+- GitHub Copilot summaries also depend on Copilot access, plan allowance, model availability, and organization policy. Sign in each account with `gh auth login`, then use **Setup > Configure AI summary > Refresh accounts** to choose one. Use **Scan available models** and **Test selected model**; these checks send no transcript text. If the result says a company web filter returned a “Page Blocked” response, ask IT to allow `api.individual.githubcopilot.com` and other approved GitHub Copilot endpoints, or retry on an approved network. That error is a network-policy block, not a model-selection error.
 - ChatGPT summaries use the official open-source **Sign in with ChatGPT** flow. In **Setup > Configure AI summary**, choose **ChatGPT**, select **Continue with ChatGPT**, authorize ChatGPT plan usage in the browser, then use **Scan available models** and **Test selected model**. These checks send no transcript text. Availability follows the ChatGPT account's plan, model access, and OpenAI's Responses API constraints.
 - If `winget` is unavailable, install Python 3.11+ through the organization's approved software channel, ensure the Python Launcher and Tkinter are included, then rerun setup.
 - Package installs use `--no-cache-dir` to force fresh package downloads. If one package fails, retry it from the Dependencies stage after the network or toolchain issue is addressed.

@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.11.0"
+  version: "1.12.0"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-11-06"
+  last_updated: "2026-11-11"
   target_root: 'D:\OneDrive\OneDrive - stryten.com\Code\Other\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Updated 2026-11-09 from the working tree at application version 0.31.0; includes selectable GitHub Copilot or ChatGPT summary providers, account-aware model scanning and selection, Sign in with ChatGPT OAuth, protected local ChatGPT credentials, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
+    value: "Updated 2026-11-11 from the working tree at application version 0.32.0; includes selectable GitHub Copilot accounts and models, clearer blocked-network diagnostics, selectable ChatGPT summary providers, account-aware model scanning and selection, Sign in with ChatGPT OAuth, protected local ChatGPT credentials, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.31.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.32.0; verify claims against current source and tests after later changes."
     - "GitHub Copilot availability depends on local SDK installation, Copilot CLI sign-in, plan allowance, network access, model rollout, and organization policy."
     - "ChatGPT summary availability depends on OpenAI Sign in with ChatGPT authorization, ChatGPT plan access, model rollout, network access, and the documented Responses API preview constraints."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
@@ -191,11 +191,14 @@ project_components:
     dependencies:
       - "Optional github-copilot-sdk package"
       - "Signed-in Copilot-enabled GitHub account"
+      - "GitHub CLI (`gh`) when choosing an account explicitly"
       - "Network, plan, model, and organization-policy availability"
     constraints:
       - "The option defaults off and exported portable configurations reset it to off."
-      - "The user can scan the models currently exposed to the signed-in account without sending transcript text, persist a stable model ID, and test that selected model before transcription."
+      - "The user can refresh successful accounts known to `gh auth status`, choose one, scan the models currently exposed to that account without sending transcript text, persist a stable model ID and account login, and test the selected model before transcription."
+      - "The selected account token is read from `gh auth token` only in memory and is passed explicitly to the SDK; it is never saved in preferences or portable configuration. VS Code sign-ins are not directly exposed to the SDK."
       - "Copilot Auto remains the default; the activity log records the actual model reported by GitHub after a successful summary."
+      - "If a proxy or company web filter returns an HTML block page for api.individual.githubcopilot.com, the UI reports a network-policy problem instead of displaying the raw HTML response."
       - "Only meeting title, speaker names, editable project aliases, and transcript text are sent; audio, file paths, voice profiles, tools, workspace context, and session storage remain unavailable to the request."
       - "Long transcripts use bounded excerpts from the start, middle, and end, and summary failure never blocks Markdown transcript creation."
 
@@ -222,6 +225,24 @@ project_components:
       - "Model scanning uses the selected account's /v1/models catalog; summaries use the Responses API with store=false and stream=true."
       - "OpenAI preview restrictions apply: audio/video input, file upload, hosted tools, and persistent remote conversation state are not used."
       - "Only meeting title, speaker names, editable project aliases, and bounded transcript text are sent; summary failure never blocks Markdown transcript creation."
+
+  - name: "GitHub account discovery"
+    path: "transcriptforge/github_auth.py"
+    purpose: "Lists authenticated GitHub CLI accounts and retrieves a selected account token in memory for explicit Copilot SDK authentication."
+    critical: false
+    authoritative_sources:
+      - "transcriptforge/github_auth.py"
+      - "transcriptforge/copilot_summary.py"
+      - "transcriptforge/app.py"
+    supporting_sources:
+      - "tests/test_github_auth.py"
+      - "README.md"
+    dependencies:
+      - "GitHub CLI installed and authenticated with `gh auth login`"
+      - "A Copilot-enabled account and supported OAuth/fine-grained token"
+    constraints:
+      - "Account discovery is limited to GitHub CLI credentials; VS Code account storage is not read."
+      - "Tokens are not logged, persisted, exported, or included in context files."
 
   - name: "Local settings and portable configuration"
     path: "transcriptforge/settings.py"
@@ -290,7 +311,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -345,7 +366,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -652,6 +673,17 @@ constraints_and_known_issues:
       - "README.md"
 
 recent_changes_summary:
+  - date: "2026-11-11"
+    description: "Added explicit GitHub CLI account selection for Copilot, in-memory token handoff to the SDK, and actionable diagnostics for company web-filter blocks while preserving ChatGPT provider selection."
+    affected_areas:
+      - "transcriptforge/github_auth.py"
+      - "transcriptforge/copilot_summary.py"
+      - "transcriptforge/app.py"
+      - "README.md"
+      - "DOC/INSTALLATION.md"
+      - "tests/test_github_auth.py"
+      - "tests/test_copilot_summary.py"
+    evidence: "Automated tests and source review for application version 0.32.0; account discovery uses the GitHub CLI and explicit SDK token authentication documented by GitHub."
   - date: "2026-11-09"
     description: "Added selectable GitHub Copilot or ChatGPT summary providers, OpenAI Sign in with ChatGPT authorization, protected local credentials, account-specific ChatGPT model scanning, selected-model validation, and CLI provider parity."
     affected_areas:
@@ -805,7 +837,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.11.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

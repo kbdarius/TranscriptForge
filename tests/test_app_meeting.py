@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from transcriptforge.app import App, NO_MEETING_SELECTION
 from transcriptforge.controller import _review_speaker_names
 from transcriptforge.copilot_summary import CopilotModelOption
+from transcriptforge.github_auth import GitHubAccountOption
 from transcriptforge.outlook_calendar import OutlookMeeting
 from transcriptforge.speakers import SpeakerProfileStore
 
@@ -72,6 +73,48 @@ class _FakeButton(_FakeDialog):
 
 
 class CopilotPreferenceTests(unittest.TestCase):
+    @patch("transcriptforge.app.messagebox.showwarning")
+    def test_github_account_scan_selects_saved_account(self, showwarning):
+        owner = _FakeDialog()
+        combo = _FakeCombo()
+        scan_button = _FakeButton()
+        app = SimpleNamespace(
+            github_account_scan_token=4,
+            copilot_dialog=owner,
+            copilot_account_combo=combo,
+            copilot_account_scan_button=scan_button,
+            copilot_account_ids_by_label={},
+            summary_github_account_var=_FakeVariable("second"),
+            copilot_account_display_var=_FakeVariable(),
+            copilot_status_var=_FakeVariable(),
+            _window_title=lambda label: f"TranscriptForge - {label}",
+            _set_copilot_status=lambda message, **_kwargs: app.copilot_status_var.set(message),
+        )
+        accounts = [GitHubAccountOption("first"), GitHubAccountOption("second", active=True)]
+
+        App._finish_github_account_scan(app, (4, owner, (True, accounts, "Found 2 accounts."), False))
+
+        self.assertEqual(combo.values, ["first", "second (active)"])
+        self.assertEqual(app.summary_github_account_var.get(), "second")
+        self.assertEqual(app.copilot_account_display_var.get(), "second (active)")
+        self.assertEqual(app.copilot_status_var.get(), "Found 2 accounts. Selected: second (active).")
+        self.assertEqual(scan_button.options["state"], "normal")
+        showwarning.assert_not_called()
+
+    def test_github_account_display_selection_updates_login(self):
+        app = SimpleNamespace(
+            copilot_account_display_var=_FakeVariable("second (active)"),
+            copilot_account_ids_by_label={"first": "first", "second (active)": "second"},
+            summary_github_account_var=_FakeVariable("first"),
+            copilot_status_var=_FakeVariable(),
+            _set_copilot_status=lambda message, **_kwargs: app.copilot_status_var.set(message),
+        )
+
+        App._select_github_account(app)
+
+        self.assertEqual(app.summary_github_account_var.get(), "second")
+        self.assertIn("second (active)", app.copilot_status_var.get())
+
     def test_application_close_cancels_active_copilot_request(self):
         request_client = SimpleNamespace(cancel=Mock())
         app = SimpleNamespace(

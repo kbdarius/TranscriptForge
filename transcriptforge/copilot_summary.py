@@ -30,6 +30,29 @@ _Result = TypeVar("_Result")
 _BULLET_PREFIX = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)")
 
 
+def format_copilot_service_error(prefix: str, error: BaseException) -> str:
+    """Turn a blocked HTML/proxy response into an actionable user message."""
+    detail = " ".join(str(error).split())
+    lowered = detail.casefold()
+    blocked_markers = (
+        "page blocked",
+        "company policy",
+        "zscaler",
+        "web page blocked",
+        "<html",
+    )
+    if any(marker in lowered for marker in blocked_markers) and (
+        "403" in lowered or "service unavailable" in lowered or "blocked" in lowered
+    ):
+        return (
+            f"{prefix}: the network or company web filter blocked GitHub Copilot's model service "
+            "and returned an HTML block page instead of JSON. This is not a model-selection "
+            "or GitHub-account error. Ask IT to allow GitHub Copilot access, including "
+            "api.individual.githubcopilot.com, or try an approved network/VPN, then scan again."
+        )
+    return f"{prefix}: {detail}"
+
+
 @dataclass(frozen=True)
 class CopilotModelOption:
     """A model currently available to the signed-in Copilot account."""
@@ -140,9 +163,13 @@ class CopilotSummaryClient:
         client_factory: Callable[[], CopilotClient] | None = None,
         *,
         model_id: str = MODEL_ID,
+        github_token: str | None = None,
+        github_account: str = "",
     ):
         self._client_factory = client_factory
         self.model_id = model_id.strip() or MODEL_ID
+        self.github_token = github_token.strip() if isinstance(github_token, str) else None
+        self.github_account = github_account.strip()
         self._active_tasks: set[tuple[asyncio.AbstractEventLoop, asyncio.Task]] = set()
         self._active_tasks_lock = threading.Lock()
         self._cancel_requested = threading.Event()
@@ -159,6 +186,8 @@ class CopilotSummaryClient:
                 "GitHub Copilot summaries require the optional github-copilot-sdk package. "
                 "Run Setup_TranscriptForge.bat and install the GitHub Copilot option."
             ) from exc
+        if self.github_token:
+            return CopilotClient(github_token=self.github_token, use_logged_in_user=False)
         return CopilotClient(use_logged_in_user=True)
 
     def _run_async(self, operation: Callable[[], Awaitable[_Result]]) -> _Result:
@@ -219,7 +248,7 @@ class CopilotSummaryClient:
         except InterruptedError:
             raise
         except Exception as exc:
-            raise RuntimeError(f"Could not scan GitHub Copilot models: {exc}") from exc
+            raise RuntimeError(format_copilot_service_error("Could not scan GitHub Copilot models", exc)) from exc
         if not getattr(auth_status, "isAuthenticated", False):
             raise RuntimeError(self._authentication_message(auth_status))
         options = []
@@ -249,7 +278,7 @@ class CopilotSummaryClient:
         except InterruptedError:
             return False, "GitHub Copilot sign-in check was cancelled."
         except Exception as exc:
-            return False, f"Could not start or check GitHub Copilot: {exc}"
+            return False, format_copilot_service_error("Could not start or check GitHub Copilot", exc)
         if not getattr(auth_status, "isAuthenticated", False):
             return False, self._authentication_message(auth_status)
         model = next((item for item in models if getattr(item, "id", None) == self.model_id), None)

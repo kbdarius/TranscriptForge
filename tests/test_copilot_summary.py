@@ -2,12 +2,14 @@ import asyncio
 import threading
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from transcriptforge.copilot_summary import (
     CopilotSummaryClient,
     MAX_TRANSCRIPT_CHARACTERS,
     MODEL_ID,
     REASONING_EFFORT,
+    format_copilot_service_error,
     normalize_summary,
     transcript_excerpt,
 )
@@ -71,6 +73,18 @@ class FakeClient:
 
 
 class CopilotSummaryTests(unittest.TestCase):
+    def test_blocked_service_error_is_actionable_and_does_not_include_html(self):
+        error = RuntimeError(
+            "JSON-RPC Error -32603 status 503 Service Unavailable body: "
+            "<html><h1>Page Blocked</h1>company policy</html>"
+        )
+
+        message = format_copilot_service_error("Could not scan GitHub Copilot models", error)
+
+        self.assertIn("network or company web filter blocked", message)
+        self.assertIn("api.individual.githubcopilot.com", message)
+        self.assertNotIn("<html>", message)
+
     def test_summary_uses_isolated_tool_free_session_and_project_context(self):
         client = FakeClient()
         summary = CopilotSummaryClient(lambda: client).summarize(
@@ -90,6 +104,21 @@ class CopilotSummaryTests(unittest.TestCase):
         self.assertIn("Meeting title: DIU review", client.session.prompt)
         self.assertIn("Known weekly-report projects and aliases: DIU; BESS", client.session.prompt)
         self.assertIn("Alex: Reviewed the DIU verification procedure", client.session.prompt)
+
+    @patch("copilot.CopilotClient")
+    def test_selected_account_token_is_passed_explicitly(self, copilot_client):
+        summary_client = CopilotSummaryClient(
+            model_id="gpt-selected",
+            github_token="gho_selected",
+            github_account="second",
+        )
+
+        summary_client._create_client()
+
+        copilot_client.assert_called_once_with(
+            github_token="gho_selected",
+            use_logged_in_user=False,
+        )
 
     def test_selected_model_is_sent_and_reported_model_is_recorded(self):
         client = FakeClient(response_model="gpt-routed")
