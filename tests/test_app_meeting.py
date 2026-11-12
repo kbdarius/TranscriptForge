@@ -7,9 +7,10 @@ from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 from transcriptforge.app import App, NO_MEETING_SELECTION
-from transcriptforge.controller import _review_speaker_names
+from transcriptforge.controller import TranscriptionController, _review_speaker_names
 from transcriptforge.copilot_summary import CopilotModelOption
 from transcriptforge.github_auth import GitHubAccountOption
+from transcriptforge.models import Segment
 from transcriptforge.outlook_calendar import OutlookMeeting
 from transcriptforge.speakers import SpeakerProfileStore
 
@@ -73,6 +74,36 @@ class _FakeButton(_FakeDialog):
 
 
 class CopilotPreferenceTests(unittest.TestCase):
+    @patch("transcriptforge.app.github_token_for_account", return_value="selected-token")
+    @patch("transcriptforge.app.CopilotSummaryClient")
+    def test_controller_uses_desktop_github_client_factory(self, copilot_client, github_token):
+        client = copilot_client.return_value
+        client.last_summary_used_excerpt = False
+        client.last_model_used = "gpt-test"
+        client.summarize.return_value = "- **NexusGateway:** Project planning"
+        app = SimpleNamespace(summary_github_account_var=_FakeVariable("second"))
+        events = []
+        controller = TranscriptionController(
+            lambda kind, value=None: events.append((kind, value)),
+            MethodType(App._summary_client, app),
+        )
+
+        summary = controller._generate_summary(
+            [Segment(0, 1, "Project planning")],
+            "NexusGateway",
+            "Project plan discussion",
+            "gpt-test",
+        )
+
+        self.assertEqual(summary, "- **NexusGateway:** Project planning")
+        github_token.assert_called_once_with("second")
+        copilot_client.assert_called_once_with(
+            model_id="gpt-test",
+            github_token="selected-token",
+            github_account="second",
+        )
+        self.assertTrue(any(kind == "log" and "Added GitHub Copilot summary" in value for kind, value in events))
+
     @patch("transcriptforge.app.messagebox.showwarning")
     def test_github_account_scan_selects_saved_account(self, showwarning):
         owner = _FakeDialog()

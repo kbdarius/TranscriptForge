@@ -7,17 +7,17 @@ metadata:
   classification_evidence:
     - "The repository contains a maintained Python application package, a CLI, requirements, Windows setup scripts, and unit tests."
     - "The repository also contains user documentation, an installation guide, a current-state report, a feasibility plan, and a project proposal."
-  version: "1.12.0"
+  version: "1.12.1"
   status: "current"
   created_date: "2026-09-25"
-  last_updated: "2026-11-11"
+  last_updated: "2026-11-12"
   target_root: 'D:\OneDrive\OneDrive - stryten.com\Code\Other\TOOLS\TranscriptForge'
-  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
+  context_file: "TRANSCRIPTFORGE_CONTEXT_v1.12.1.yaml"
   source_snapshot:
     type: "inventory_snapshot"
-    value: "Updated 2026-11-11 from the working tree at application version 0.32.0; includes selectable GitHub Copilot accounts and models, clearer blocked-network diagnostics, selectable ChatGPT summary providers, account-aware model scanning and selection, Sign in with ChatGPT OAuth, protected local ChatGPT credentials, editable project aliases, non-blocking failure handling, bounded excerpts, and explicit remote-data consent."
+    value: "Updated 2026-11-12 from the working tree at application version 0.32.1; fixes desktop GitHub Copilot summary-client construction while retaining selectable accounts and models, clearer blocked-network diagnostics, selectable ChatGPT summary providers, protected credentials, bounded excerpts, and non-blocking failure handling."
   coverage_limits:
-    - "This snapshot documents the working tree at application version 0.32.0; verify claims against current source and tests after later changes."
+    - "This snapshot documents the working tree at application version 0.32.1; verify claims against current source and tests after later changes."
     - "GitHub Copilot availability depends on local SDK installation, Copilot CLI sign-in, plan allowance, network access, model rollout, and organization policy."
     - "ChatGPT summary availability depends on OpenAI Sign in with ChatGPT authorization, ChatGPT plan access, model rollout, network access, and the documented Responses API preview constraints."
     - "Five untracked PNGs under DOC/image/SPEAKER_RECOGNITION_FEASIBILITY_PLAN were not opened or content-reviewed."
@@ -311,7 +311,7 @@ file_structure:
   key_paths:
     - path: "AGENTS.md"
       purpose: "Repository-specific versioning, test, documentation, and context-maintenance instructions."
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.1.yaml"
       purpose: "Versioned project map, source routing, workflows, dependencies, and constraints."
     - path: "README.md"
       purpose: "Current user-facing overview, guided setup, usage, speaker workflow, CLI examples, and local-data behavior."
@@ -366,7 +366,7 @@ source_of_truth:
     - path: "DOC/SPEAKER_RECOGNITION_CURRENT_STATE.md"
       supports: "Speaker-recognition status and documented limitations, checked against source and tests."
   derived:
-    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
+    - path: "TRANSCRIPTFORGE_CONTEXT_v1.12.1.yaml"
       derived_from:
         - "AGENTS.md"
         - "README.md"
@@ -673,6 +673,14 @@ constraints_and_known_issues:
       - "README.md"
 
 recent_changes_summary:
+  - date: "2026-11-12"
+    description: "Fixed the desktop GitHub Copilot summary-client factory so enabled meeting summaries use the selected account and model instead of being skipped by a missing provider argument."
+    affected_areas:
+      - "transcriptforge/app.py"
+      - "transcriptforge/controller.py"
+      - "tests/test_app_meeting.py"
+      - "README.md"
+    evidence: "Regression test exercises the desktop App summary-client factory through TranscriptionController; required compile and unit-test commands pass for application version 0.32.1."
   - date: "2026-11-11"
     description: "Added explicit GitHub CLI account selection for Copilot, in-memory token handoff to the SDK, and actionable diagnostics for company web-filter blocks while preserving ChatGPT provider selection."
     affected_areas:
@@ -837,7 +845,7 @@ ai_navigation:
     - step: 2
       action: "Use this context file to route the task to relevant sources."
       sources:
-        - "TRANSCRIPTFORGE_CONTEXT_v1.12.0.yaml"
+        - "TRANSCRIPTFORGE_CONTEXT_v1.12.1.yaml"
     - step: 3
       action: "Verify current behavior against implementation and relevant tests; consult user documentation for supported workflows."
       sources:

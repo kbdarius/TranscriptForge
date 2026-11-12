@@ -723,7 +723,7 @@ class App(tk.Tk):
         setter = getattr(self, "_set_copilot_status", None)
         setter(message) if setter is not None else self.copilot_status_var.set(message)
 
-    def _summary_client(self, provider, model_id):
+    def _summary_client(self, model_id, provider=GITHUB_COPILOT_PROVIDER):
         if provider == CHATGPT_PROVIDER:
             return ChatGPTSummaryClient(access_token=self.chatgpt_authenticator.access_token(), model_id=model_id)
         account_variable = getattr(self, "summary_github_account_var", None)
@@ -779,7 +779,7 @@ class App(tk.Tk):
         provider = self.summary_provider_var.get()
         model_id = self.copilot_model_var.get().strip() or (MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID)
         try:
-            client = self._summary_client(provider, model_id)
+            client = self._summary_client(model_id=model_id, provider=provider)
         except Exception as exc:
             self._set_copilot_status(str(exc))
             return
@@ -857,7 +857,7 @@ class App(tk.Tk):
         provider = self.summary_provider_var.get()
         selected_model = self.copilot_model_var.get().strip() or (MODEL_ID if provider == GITHUB_COPILOT_PROVIDER else DEFAULT_MODEL_ID)
         try:
-            client = self._summary_client(provider, selected_model)
+            client = self._summary_client(model_id=selected_model, provider=provider)
         except Exception as exc:
             button.configure(state="normal")
             if self.copilot_scan_button is not None:

@@ -64,7 +64,7 @@ class TranscriptionController:
         except InterruptedError:
             raise
         except Exception as exc:
-            self._emit("log", f"Warning: GitHub Copilot summary was skipped: {exc}")
+            self._emit("log", f"Warning: {provider_name} summary was skipped: {exc}")
             return ""
         finally:
             self.summary_client = None
